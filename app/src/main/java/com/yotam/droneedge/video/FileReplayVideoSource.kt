@@ -64,7 +64,7 @@ class FileReplayVideoSource(
             while (running) {
                 val bitmap: Bitmap? = retriever.getFrameAtTime(
                     videoTimeMs * 1_000L,                        // µs
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                    MediaMetadataRetriever.OPTION_CLOSEST,       // decode actual frame, not just nearest keyframe
                 )
                 emit(
                     VideoFrame(

@@ -16,8 +16,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class LiveViewModel : ViewModel() {
 
@@ -111,25 +111,40 @@ class LiveViewModel : ViewModel() {
         videoSource.start()
 
         pipelineJob = viewModelScope.launch {
-            videoSource.frames.collect { frame ->
-                val nowPreview = System.currentTimeMillis()
-                if (lastPreviewFrameMs > 0L) {
-                    val dt = nowPreview - lastPreviewFrameMs
-                    if (dt > 0) _previewFps.value =
-                        _previewFps.value * 0.85f + (1000f / dt) * 0.15f
-                }
-                lastPreviewFrameMs = nowPreview
+            // Latest frame shared between the two coroutines below.
+            // StateFlow is conflated — if inference is slow, it naturally picks up
+            // the most recent frame instead of queuing up every intermediate one.
+            val latestFrame = MutableStateFlow<com.yotam.droneedge.video.VideoFrame?>(null)
 
-                val results = withContext(Dispatchers.Default) { detector.detect(frame) }
-                _detections.value = results
-
-                val nowInfer = System.currentTimeMillis()
-                if (lastInferenceMs > 0L) {
-                    val dt = nowInfer - lastInferenceMs
-                    if (dt > 0) _inferenceFps.value =
-                        _inferenceFps.value * 0.85f + (1000f / dt) * 0.15f
+            // Coroutine 1: collect frames at full source speed, track preview FPS.
+            launch {
+                videoSource.frames.collect { frame ->
+                    val now = System.currentTimeMillis()
+                    if (lastPreviewFrameMs > 0L) {
+                        val dt = now - lastPreviewFrameMs
+                        if (dt > 0) _previewFps.value =
+                            _previewFps.value * 0.85f + (1000f / dt) * 0.15f
+                    }
+                    lastPreviewFrameMs = now
+                    latestFrame.value = frame
                 }
-                lastInferenceMs = nowInfer
+            }
+
+            // Coroutine 2: run inference on latest available frame; skips frames
+            // automatically when inference is slower than the source frame rate.
+            launch(Dispatchers.Default) {
+                latestFrame.filterNotNull().collect { frame ->
+                    val results = detector.detect(frame)
+                    _detections.value = results
+
+                    val now = System.currentTimeMillis()
+                    if (lastInferenceMs > 0L) {
+                        val dt = now - lastInferenceMs
+                        if (dt > 0) _inferenceFps.value =
+                            _inferenceFps.value * 0.85f + (1000f / dt) * 0.15f
+                    }
+                    lastInferenceMs = now
+                }
             }
         }
     }
