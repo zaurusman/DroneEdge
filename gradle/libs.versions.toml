@@ -10,6 +10,9 @@ kotlin = "2.2.10"
 composeBom = "2026.05.01"
 media3 = "1.4.1"
 coroutinesTest = "1.9.0"
+# TensorFlow Lite — object detection inference engine
+tflite = "2.14.0"
+tfliteSupport = "0.4.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -33,6 +36,8 @@ androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplaye
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 # Coroutines test utilities (runTest, StandardTestDispatcher)
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
+tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tfliteSupport" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

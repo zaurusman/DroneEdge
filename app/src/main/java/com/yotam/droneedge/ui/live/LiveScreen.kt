@@ -15,7 +15,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,11 +50,13 @@ import com.yotam.droneedge.detection.Detection
 
 @Composable
 fun LiveScreen(vm: LiveViewModel = viewModel()) {
-    val sessionState by vm.sessionState.collectAsStateWithLifecycle()
-    val detections   by vm.detections.collectAsStateWithLifecycle()
-    val previewFps   by vm.previewFps.collectAsStateWithLifecycle()
-    val inferenceFps by vm.inferenceFps.collectAsStateWithLifecycle()
-    val videoUri     by vm.videoUri.collectAsStateWithLifecycle()
+    val sessionState  by vm.sessionState.collectAsStateWithLifecycle()
+    val detections    by vm.detections.collectAsStateWithLifecycle()
+    val previewFps    by vm.previewFps.collectAsStateWithLifecycle()
+    val inferenceFps  by vm.inferenceFps.collectAsStateWithLifecycle()
+    val videoUri      by vm.videoUri.collectAsStateWithLifecycle()
+    val detectorMode  by vm.detectorMode.collectAsStateWithLifecycle()
+    val error         by vm.error.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -125,50 +129,103 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
             }
         }
 
+        // ── Error snackbar (bottom, above controls) ───────────────────────────
+        if (error != null) {
+            Snackbar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp, start = 16.dp, end = 16.dp),
+                action = {
+                    TextButton(onClick = { vm.clearError() }) { Text("Dismiss") }
+                },
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor   = MaterialTheme.colorScheme.onErrorContainer,
+            ) {
+                Text(error!!)
+            }
+        }
+
         // ── Bottom controls ───────────────────────────────────────────────────
-        Row(
+        Column(
             modifier            = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 40.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment   = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // File picker / clear button (only while idle)
+            // Detector toggle row (only while idle)
             if (sessionState == SessionState.IDLE) {
-                if (videoUri == null) {
-                    OutlinedButton(onClick = { filePicker.launch("video/*") }) {
-                        Text("Pick Video")
-                    }
-                } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment     = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text     = "Detector:",
+                        color    = Color(0xFFB0BEC5),
+                        fontSize = 12.sp,
+                    )
                     OutlinedButton(
-                        onClick = { vm.useFakeSource() },
-                        colors  = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                    ) {
-                        Text("Clear Video")
-                    }
+                        onClick = { vm.setDetectorMode(DetectorMode.FAKE) },
+                        colors  = if (detectorMode == DetectorMode.FAKE)
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor   = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        else ButtonDefaults.outlinedButtonColors(),
+                    ) { Text("Fake") }
+                    OutlinedButton(
+                        onClick = { vm.setDetectorMode(DetectorMode.TFLITE, context) },
+                        colors  = if (detectorMode == DetectorMode.TFLITE)
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor   = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        else ButtonDefaults.outlinedButtonColors(),
+                    ) { Text("TFLite") }
                 }
             }
 
-            // Start / Stop
-            Button(
-                onClick = {
-                    when (sessionState) {
-                        SessionState.IDLE     -> vm.start()
-                        SessionState.RUNNING  -> vm.stop()
-                        SessionState.STOPPING -> Unit
-                    }
-                },
-                enabled = sessionState != SessionState.STOPPING,
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment     = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = when (sessionState) {
-                        SessionState.IDLE     -> "Start"
-                        SessionState.RUNNING  -> "Stop"
-                        SessionState.STOPPING -> "Stopping…"
+                // File picker / clear button (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    if (videoUri == null) {
+                        OutlinedButton(onClick = { filePicker.launch("video/*") }) {
+                            Text("Pick Video")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { vm.useFakeSource() },
+                            colors  = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                        ) {
+                            Text("Clear Video")
+                        }
                     }
-                )
+                }
+
+                // Start / Stop
+                Button(
+                    onClick = {
+                        when (sessionState) {
+                            SessionState.IDLE     -> vm.start()
+                            SessionState.RUNNING  -> vm.stop()
+                            SessionState.STOPPING -> Unit
+                        }
+                    },
+                    enabled = sessionState != SessionState.STOPPING,
+                ) {
+                    Text(
+                        text = when (sessionState) {
+                            SessionState.IDLE     -> "Start"
+                            SessionState.RUNNING  -> "Stop"
+                            SessionState.STOPPING -> "Stopping…"
+                        }
+                    )
+                }
             }
         }
     }

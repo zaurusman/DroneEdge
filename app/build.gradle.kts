@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+
 android {
     namespace = "com.yotam.droneedge"
     compileSdk {
@@ -37,6 +38,10 @@ android {
     buildFeatures {
         compose = true
     }
+    // Prevent Gradle from compressing the TFLite model file — the interpreter requires it mmapped raw
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -52,6 +57,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.support)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))
