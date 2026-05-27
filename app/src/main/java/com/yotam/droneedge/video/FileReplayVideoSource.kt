@@ -50,6 +50,9 @@ class FileReplayVideoSource(
         }
     }
 
+    override val width: Int get() = videoWidth
+    override val height: Int get() = videoHeight
+
     @Volatile private var running = false
     @Volatile private var frameIndex = 0L
 

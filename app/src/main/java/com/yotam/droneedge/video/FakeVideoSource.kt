@@ -14,6 +14,9 @@ class FakeVideoSource(
     private val targetFps: Int = 30,
 ) : VideoSource {
 
+    override val width: Int get() = frameWidthPx
+    override val height: Int get() = frameHeightPx
+
     @Volatile private var running = false
     @Volatile private var frameIndex = 0L
 
