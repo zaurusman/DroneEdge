@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.yotam.droneedge.detection.Detection
 import com.yotam.droneedge.detection.Detector
 import com.yotam.droneedge.detection.FakeDetector
+import com.yotam.droneedge.detection.TfliteDetector
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
 import com.yotam.droneedge.video.VideoSource
@@ -22,11 +23,20 @@ class LiveViewModel : ViewModel() {
 
     // ── Pipeline (swappable while IDLE) ──────────────────────────────────────
     private var videoSource: VideoSource = FakeVideoSource()
-    private val detector: Detector = FakeDetector()
+    private var detector: Detector = FakeDetector()
+    private var tfliteDetector: TfliteDetector? = null
 
     // ── Video URI (null = fake source) ────────────────────────────────────────
     private val _videoUri = MutableStateFlow<Uri?>(null)
     val videoUri: StateFlow<Uri?> = _videoUri.asStateFlow()
+
+    // ── Detector mode ─────────────────────────────────────────────────────────
+    private val _detectorMode = MutableStateFlow(DetectorMode.FAKE)
+    val detectorMode: StateFlow<DetectorMode> = _detectorMode.asStateFlow()
+
+    // ── Error message (null = no error) ───────────────────────────────────────
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
 
     // ── Session state ─────────────────────────────────────────────────────────
     private val _sessionState = MutableStateFlow(SessionState.IDLE)
@@ -49,19 +59,47 @@ class LiveViewModel : ViewModel() {
 
     // ── Source selection (only while IDLE) ────────────────────────────────────
 
-    /** Switch to a local MP4 file as the video source. */
     fun useFileSource(uri: Uri, context: Context) {
         if (_sessionState.value != SessionState.IDLE) return
         videoSource = FileReplayVideoSource(uri, context.applicationContext)
         _videoUri.value = uri
     }
 
-    /** Switch back to the synthetic fake source. */
     fun useFakeSource() {
         if (_sessionState.value != SessionState.IDLE) return
         videoSource = FakeVideoSource()
         _videoUri.value = null
     }
+
+    // ── Detector selection (only while IDLE) ──────────────────────────────────
+
+    fun setDetectorMode(mode: DetectorMode, context: Context? = null) {
+        if (_sessionState.value != SessionState.IDLE) return
+        when (mode) {
+            DetectorMode.FAKE -> {
+                tfliteDetector?.close()
+                tfliteDetector = null
+                detector = FakeDetector()
+                _detectorMode.value = DetectorMode.FAKE
+                _error.value = null
+            }
+            DetectorMode.TFLITE -> {
+                if (context == null) return
+                try {
+                    val tfd = TfliteDetector(context.applicationContext)
+                    tfliteDetector?.close()
+                    tfliteDetector = tfd
+                    detector = tfd
+                    _detectorMode.value = DetectorMode.TFLITE
+                    _error.value = null
+                } catch (e: Exception) {
+                    _error.value = "TFLite load failed: ${e.message}"
+                }
+            }
+        }
+    }
+
+    fun clearError() { _error.value = null }
 
     // ── Session control ───────────────────────────────────────────────────────
 
@@ -74,27 +112,22 @@ class LiveViewModel : ViewModel() {
 
         pipelineJob = viewModelScope.launch {
             videoSource.frames.collect { frame ->
-                // Preview FPS — exponential moving average
                 val nowPreview = System.currentTimeMillis()
                 if (lastPreviewFrameMs > 0L) {
-                    val interval = nowPreview - lastPreviewFrameMs
-                    if (interval > 0) {
-                        _previewFps.value = _previewFps.value * 0.85f + (1000f / interval) * 0.15f
-                    }
+                    val dt = nowPreview - lastPreviewFrameMs
+                    if (dt > 0) _previewFps.value =
+                        _previewFps.value * 0.85f + (1000f / dt) * 0.15f
                 }
                 lastPreviewFrameMs = nowPreview
 
-                // Detect off the main thread
                 val results = withContext(Dispatchers.Default) { detector.detect(frame) }
                 _detections.value = results
 
-                // Inference FPS
                 val nowInfer = System.currentTimeMillis()
                 if (lastInferenceMs > 0L) {
-                    val interval = nowInfer - lastInferenceMs
-                    if (interval > 0) {
-                        _inferenceFps.value = _inferenceFps.value * 0.85f + (1000f / interval) * 0.15f
-                    }
+                    val dt = nowInfer - lastInferenceMs
+                    if (dt > 0) _inferenceFps.value =
+                        _inferenceFps.value * 0.85f + (1000f / dt) * 0.15f
                 }
                 lastInferenceMs = nowInfer
             }
@@ -117,5 +150,6 @@ class LiveViewModel : ViewModel() {
         super.onCleared()
         videoSource.stop()
         pipelineJob?.cancel()
+        tfliteDetector?.close()
     }
 }

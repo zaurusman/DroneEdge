@@ -1,24 +1,29 @@
 package com.yotam.droneedge.video
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 
 /**
- * Emits VideoFrames timed to the duration of a local MP4 file.
+ * Emits VideoFrames from a local MP4 file.
  *
- * Phase 2: frames carry only metadata (index, timestamp, dimensions) — no pixel data yet.
- * Actual bitmap extraction will be added in Phase 3 when TFLite needs raw pixels.
+ * Each frame includes a [VideoFrame.bitmap] decoded via [MediaMetadataRetriever.getFrameAtTime].
+ * This is accurate but slower than MediaCodec; it is adequate for Phase 3 development and
+ * will be replaced with a proper MediaCodec decoder in Phase 5.
  *
- * The emitted [VideoFrame.timestampMs] advances by [1000 / targetFps] ms per frame and
- * loops back to 0 when it reaches the video's duration, matching the ExoPlayer loop.
+ * The flow runs on [Dispatchers.IO] so that bitmap decoding does not block the main thread.
+ * Because decoding each frame can take > 33 ms, the effective FPS is limited by decoder speed.
+ * The ViewModel uses the latest detection result to keep the overlay live.
  *
  * @param uri       Content URI of the video file chosen by the user.
- * @param context   Application context (needed by MediaMetadataRetriever).
- * @param targetFps Frame rate at which to drive the detection pipeline.
+ * @param context   Application context — needed by MediaMetadataRetriever.
+ * @param targetFps Upper bound on emission rate; actual rate may be lower due to decoding time.
  */
 class FileReplayVideoSource(
     private val uri: Uri,
@@ -52,20 +57,32 @@ class FileReplayVideoSource(
         val intervalMs = 1000L / targetFps
         var videoTimeMs = 0L
 
-        while (running) {
-            emit(
-                VideoFrame(
-                    index        = frameIndex++,
-                    timestampMs  = videoTimeMs,
-                    width        = videoWidth,
-                    height       = videoHeight,
+        val retriever = MediaMetadataRetriever()
+        retriever.setDataSource(context, uri)
+
+        try {
+            while (running) {
+                val bitmap: Bitmap? = retriever.getFrameAtTime(
+                    videoTimeMs * 1_000L,                        // µs
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                 )
-            )
-            videoTimeMs += intervalMs
-            if (durationMs > 0L && videoTimeMs >= durationMs) videoTimeMs = 0L
-            delay(intervalMs)
+                emit(
+                    VideoFrame(
+                        index       = frameIndex++,
+                        timestampMs = videoTimeMs,
+                        width       = videoWidth,
+                        height      = videoHeight,
+                        bitmap      = bitmap,
+                    )
+                )
+                videoTimeMs += intervalMs
+                if (durationMs > 0L && videoTimeMs >= durationMs) videoTimeMs = 0L
+                delay(intervalMs)
+            }
+        } finally {
+            retriever.release()
         }
-    }
+    }.flowOn(Dispatchers.IO) // bitmap decoding stays off the main thread
 
     override fun start() {
         frameIndex = 0L
