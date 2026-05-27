@@ -1,5 +1,6 @@
 package com.yotam.droneedge.ui.live
 
+import android.app.Application
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -27,7 +28,7 @@ class LiveViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        vm = LiveViewModel()
+        vm = LiveViewModel(Application())
     }
 
     @After
