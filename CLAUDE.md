@@ -94,14 +94,36 @@ Initial implementations may use simpler placeholders, but recording code should 
 - Latency and thermal behavior matter.
 - DJI stream access is uncertain and should be isolated behind DjiGogglesVideoSource.
 
+## GitHub
+
+Remote: https://github.com/zaurusman/DroneEdge  
+Owner: zaurusman  
+Default branch: main
+
+## Git / GitHub Workflow
+
+Every feature must follow this cycle — no exceptions:
+
+1. **Branch** — create `feature/<short-name>` from the latest `main` before touching code.
+2. **Implement** — make the smallest useful step; keep commits atomic and well-described.
+3. **Test** — write unit or integration tests for the new behaviour; run them with Gradle before merging.
+4. **Build gate** — run `./gradlew assembleDebug` (and `./gradlew test` if unit tests exist); fix all errors.
+5. **Merge** — only merge back to `main` when the build is green and tests pass; use a PR (`gh pr create`) so there is a record.
+6. **Summarize** — after merging, report branch name, what changed, build result, and commit hash.
+
+Never commit directly to `main`.  
+Never merge a branch that has failing tests or compile errors.
+
 ## Claude Workflow Rules
 
 Before making large changes:
 
 1. Briefly explain the plan.
-2. Make the smallest useful implementation step.
-3. Run the relevant Gradle build/check command.
-4. Fix compile errors before stopping.
-5. Summarize what changed and what remains.
+2. Create a `feature/<name>` branch if not already on one.
+3. Make the smallest useful implementation step.
+4. Write tests for the new behaviour.
+5. Run the relevant Gradle build/check command.
+6. Fix compile errors before stopping.
+7. Summarize what changed and what remains.
 
 When uncertain, prefer creating interfaces and placeholders instead of guessing irreversible implementation details.
