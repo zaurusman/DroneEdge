@@ -1,10 +1,15 @@
 package com.yotam.droneedge.ui.live
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yotam.droneedge.detection.Detection
+import com.yotam.droneedge.detection.Detector
 import com.yotam.droneedge.detection.FakeDetector
 import com.yotam.droneedge.video.FakeVideoSource
+import com.yotam.droneedge.video.FileReplayVideoSource
+import com.yotam.droneedge.video.VideoSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,15 +20,19 @@ import kotlinx.coroutines.withContext
 
 class LiveViewModel : ViewModel() {
 
-    // Video and detection pipeline (replaceable in later phases)
-    private val videoSource = FakeVideoSource()
-    private val detector = FakeDetector()
+    // ── Pipeline (swappable while IDLE) ──────────────────────────────────────
+    private var videoSource: VideoSource = FakeVideoSource()
+    private val detector: Detector = FakeDetector()
 
-    // ── Session state ──────────────────────────────────────────────────────────
+    // ── Video URI (null = fake source) ────────────────────────────────────────
+    private val _videoUri = MutableStateFlow<Uri?>(null)
+    val videoUri: StateFlow<Uri?> = _videoUri.asStateFlow()
+
+    // ── Session state ─────────────────────────────────────────────────────────
     private val _sessionState = MutableStateFlow(SessionState.IDLE)
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
-    // ── Detection results ──────────────────────────────────────────────────────
+    // ── Detection results ─────────────────────────────────────────────────────
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
     val detections: StateFlow<List<Detection>> = _detections.asStateFlow()
 
@@ -36,10 +45,25 @@ class LiveViewModel : ViewModel() {
 
     private var lastPreviewFrameMs = 0L
     private var lastInferenceMs = 0L
-
     private var pipelineJob: Job? = null
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ── Source selection (only while IDLE) ────────────────────────────────────
+
+    /** Switch to a local MP4 file as the video source. */
+    fun useFileSource(uri: Uri, context: Context) {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource = FileReplayVideoSource(uri, context.applicationContext)
+        _videoUri.value = uri
+    }
+
+    /** Switch back to the synthetic fake source. */
+    fun useFakeSource() {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource = FakeVideoSource()
+        _videoUri.value = null
+    }
+
+    // ── Session control ───────────────────────────────────────────────────────
 
     fun start() {
         if (_sessionState.value != SessionState.IDLE) return
@@ -50,21 +74,18 @@ class LiveViewModel : ViewModel() {
 
         pipelineJob = viewModelScope.launch {
             videoSource.frames.collect { frame ->
-                // Preview FPS (exponential moving average)
+                // Preview FPS — exponential moving average
                 val nowPreview = System.currentTimeMillis()
                 if (lastPreviewFrameMs > 0L) {
                     val interval = nowPreview - lastPreviewFrameMs
                     if (interval > 0) {
-                        val instant = 1000f / interval
-                        _previewFps.value = _previewFps.value * 0.85f + instant * 0.15f
+                        _previewFps.value = _previewFps.value * 0.85f + (1000f / interval) * 0.15f
                     }
                 }
                 lastPreviewFrameMs = nowPreview
 
-                // Run detection off the main thread
-                val results = withContext(Dispatchers.Default) {
-                    detector.detect(frame)
-                }
+                // Detect off the main thread
+                val results = withContext(Dispatchers.Default) { detector.detect(frame) }
                 _detections.value = results
 
                 // Inference FPS
@@ -72,8 +93,7 @@ class LiveViewModel : ViewModel() {
                 if (lastInferenceMs > 0L) {
                     val interval = nowInfer - lastInferenceMs
                     if (interval > 0) {
-                        val instant = 1000f / interval
-                        _inferenceFps.value = _inferenceFps.value * 0.85f + instant * 0.15f
+                        _inferenceFps.value = _inferenceFps.value * 0.85f + (1000f / interval) * 0.15f
                     }
                 }
                 lastInferenceMs = nowInfer
