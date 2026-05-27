@@ -50,13 +50,15 @@ import com.yotam.droneedge.detection.Detection
 
 @Composable
 fun LiveScreen(vm: LiveViewModel = viewModel()) {
-    val sessionState  by vm.sessionState.collectAsStateWithLifecycle()
-    val detections    by vm.detections.collectAsStateWithLifecycle()
-    val previewFps    by vm.previewFps.collectAsStateWithLifecycle()
-    val inferenceFps  by vm.inferenceFps.collectAsStateWithLifecycle()
-    val videoUri      by vm.videoUri.collectAsStateWithLifecycle()
-    val detectorMode  by vm.detectorMode.collectAsStateWithLifecycle()
-    val error         by vm.error.collectAsStateWithLifecycle()
+    val sessionState   by vm.sessionState.collectAsStateWithLifecycle()
+    val detections     by vm.detections.collectAsStateWithLifecycle()
+    val previewFps     by vm.previewFps.collectAsStateWithLifecycle()
+    val inferenceFps   by vm.inferenceFps.collectAsStateWithLifecycle()
+    val videoUri       by vm.videoUri.collectAsStateWithLifecycle()
+    val detectorMode   by vm.detectorMode.collectAsStateWithLifecycle()
+    val error          by vm.error.collectAsStateWithLifecycle()
+    val recordingState by vm.recordingState.collectAsStateWithLifecycle()
+    val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -145,6 +147,20 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
             }
         }
 
+        // ── Recording saved snackbar ──────────────────────────────────────────
+        if (lastRecording != null) {
+            Snackbar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp, start = 16.dp, end = 16.dp),
+                action = {
+                    TextButton(onClick = { vm.clearLastRecording() }) { Text("Dismiss") }
+                },
+            ) {
+                Text("Saved to Movies/DroneEdge/")
+            }
+        }
+
         // ── Bottom controls ───────────────────────────────────────────────────
         Column(
             modifier            = Modifier
@@ -204,6 +220,28 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
                         ) {
                             Text("Clear Video")
                         }
+                    }
+                }
+
+                // REC toggle (only while running)
+                if (sessionState == SessionState.RUNNING) {
+                    when (recordingState) {
+                        RecordingState.IDLE -> OutlinedButton(
+                            onClick = { vm.armRecording() },
+                        ) { Text("REC") }
+
+                        RecordingState.ARMED -> Button(
+                            onClick = { vm.disarmRecording() },
+                            colors  = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFD32F2F),
+                                contentColor   = Color.White,
+                            ),
+                        ) { Text("● REC") }
+
+                        RecordingState.FINALIZING -> OutlinedButton(
+                            onClick  = {},
+                            enabled  = false,
+                        ) { Text("Saving…") }
                     }
                 }
 
