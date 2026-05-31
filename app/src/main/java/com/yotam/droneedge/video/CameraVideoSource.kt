@@ -3,7 +3,6 @@ package com.yotam.droneedge.video
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.util.Range
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -32,9 +31,11 @@ class CameraVideoSource(
         private set
 
     @Volatile private var frameIndex = 0L
+    @Volatile private var lastFrameMs = 0L
 
     override fun start() {
         frameIndex = 0L
+        lastFrameMs = 0L
     }
 
     // stop() is a no-op — cleanup is owned by the flow's awaitClose,
@@ -58,11 +59,13 @@ class CameraVideoSource(
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
-            .setTargetFrameRate(Range(1, 30))
             .build()
             .also { ia ->
                 ia.setAnalyzer(executor) { proxy ->
                     try {
+                        val now = System.currentTimeMillis()
+                        if (now - lastFrameMs < 33L) return@setAnalyzer
+                        lastFrameMs = now
                         val raw = proxy.toBitmap()
                         val deg = proxy.imageInfo.rotationDegrees
                         val bmp = if (deg != 0) {
