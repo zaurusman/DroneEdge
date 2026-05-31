@@ -3,6 +3,7 @@ package com.yotam.droneedge.video
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.util.Range
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -57,6 +58,7 @@ class CameraVideoSource(
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+            .setTargetFrameRate(Range(1, 30))
             .build()
             .also { ia ->
                 ia.setAnalyzer(executor) { proxy ->
