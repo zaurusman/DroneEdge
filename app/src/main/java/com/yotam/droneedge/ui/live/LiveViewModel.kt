@@ -94,8 +94,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _latestFrame = MutableStateFlow<VideoFrame?>(null)
     val latestFrame: StateFlow<VideoFrame?> = _latestFrame.asStateFlow()
 
-    private var lastPreviewFrameMs = 0L
-    private var lastInferenceMs = 0L
+    private val previewFrameTimes = ArrayDeque<Long>()
+    private val inferenceFrameTimes = ArrayDeque<Long>()
     private var pipelineJob: Job? = null
 
     // ── Source selection (only while IDLE) ────────────────────────────────────
@@ -232,8 +232,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     fun start() {
         if (_sessionState.value != SessionState.IDLE) return
         _sessionState.value = SessionState.RUNNING
-        lastPreviewFrameMs = 0L
-        lastInferenceMs = 0L
+        previewFrameTimes.clear()
+        inferenceFrameTimes.clear()
         videoSource.start()
 
         armRecording()
@@ -243,12 +243,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             launch {
                 videoSource.frames.collect { frame ->
                     val now = System.currentTimeMillis()
-                    if (lastPreviewFrameMs > 0L) {
-                        val dt = now - lastPreviewFrameMs
-                        if (dt > 0) _previewFps.value =
-                            _previewFps.value * 0.85f + (1000f / dt) * 0.15f
-                    }
-                    lastPreviewFrameMs = now
+                    previewFrameTimes.addLast(now)
+                    val cutoff = now - 1000L
+                    while (previewFrameTimes.isNotEmpty() && previewFrameTimes.first() < cutoff)
+                        previewFrameTimes.removeFirst()
+                    _previewFps.value = previewFrameTimes.size.toFloat()
                     _latestFrame.value = frame
                 }
                 // Flow ended without an explicit stop() — source disconnected or failed.
@@ -270,12 +269,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     val now = System.currentTimeMillis()
-                    if (lastInferenceMs > 0L) {
-                        val dt = now - lastInferenceMs
-                        if (dt > 0) _inferenceFps.value =
-                            _inferenceFps.value * 0.85f + (1000f / dt) * 0.15f
-                    }
-                    lastInferenceMs = now
+                    inferenceFrameTimes.addLast(now)
+                    val cutoff = now - 1000L
+                    while (inferenceFrameTimes.isNotEmpty() && inferenceFrameTimes.first() < cutoff)
+                        inferenceFrameTimes.removeFirst()
+                    _inferenceFps.value = inferenceFrameTimes.size.toFloat()
                 }
             }
         }
