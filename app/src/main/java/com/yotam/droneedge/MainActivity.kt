@@ -1,5 +1,6 @@
 package com.yotam.droneedge
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -11,10 +12,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import com.yotam.droneedge.ui.live.DetectorMode
 import com.yotam.droneedge.ui.live.LiveScreen
 import com.yotam.droneedge.ui.live.LiveViewModel
+import com.yotam.droneedge.ui.live.ModelSelectionScreen
 import com.yotam.droneedge.ui.recordings.RecordingsScreen
 import com.yotam.droneedge.ui.theme.DroneEdgeTheme
+
+private const val PREFS_NAME     = "droneedge_prefs"
+private const val KEY_DETECTOR   = "detector_mode"
 
 class MainActivity : ComponentActivity() {
 
@@ -26,13 +32,27 @@ class MainActivity : ComponentActivity() {
         intent?.let { vm.handleUsbLaunchIntent(it, this) }
         setContent {
             DroneEdgeTheme {
-                var showRecordings by rememberSaveable { mutableStateOf(false) }
+                var showModelSelection by rememberSaveable { mutableStateOf(true) }
+                var showGallery        by rememberSaveable { mutableStateOf(false) }
 
-                if (showRecordings) {
-                    BackHandler { showRecordings = false }
-                    RecordingsScreen(onBack = { showRecordings = false })
-                } else {
-                    LiveScreen(vm = vm, onRecordings = { showRecordings = true })
+                when {
+                    showModelSelection -> ModelSelectionScreen(
+                        initialMode        = loadDetectorMode(),
+                        isTfliteAvailable  = isTfliteAvailable(),
+                        onConfirm          = { mode ->
+                            vm.setDetectorMode(mode, this@MainActivity)
+                            saveDetectorMode(mode)
+                            showModelSelection = false
+                        },
+                    )
+                    showGallery -> {
+                        BackHandler { showGallery = false }
+                        RecordingsScreen(onBack = { showGallery = false })
+                    }
+                    else -> LiveScreen(
+                        vm           = vm,
+                        onGallery    = { showGallery = true },
+                    )
                 }
             }
         }
@@ -42,4 +62,21 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         vm.handleUsbLaunchIntent(intent, this)
     }
+
+    private fun loadDetectorMode(): DetectorMode {
+        val stored = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_DETECTOR, DetectorMode.FAKE.name) ?: DetectorMode.FAKE.name
+        return runCatching { DetectorMode.valueOf(stored) }.getOrDefault(DetectorMode.FAKE)
+    }
+
+    private fun saveDetectorMode(mode: DetectorMode) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DETECTOR, mode.name)
+            .apply()
+    }
+
+    private fun isTfliteAvailable(): Boolean = runCatching {
+        assets.open("detect.tflite").close()
+    }.isSuccess
 }
