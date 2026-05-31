@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Match USB Video Class devices that advertise the Video class at the
+        device level (bDeviceClass = 0x0E). Many multi-function webcams report
+        0xEF at device level with UVC at the interface level — those are found
+        in code by scanning interface classes after connection.
+    -->
+    <usb-device class="14" />
+</resources>

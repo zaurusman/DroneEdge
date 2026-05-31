@@ -1,8 +1,21 @@
 package com.yotam.droneedge.ui.live
 
+import android.Manifest
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,11 +36,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +50,8 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -47,6 +64,9 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
+import com.yotam.droneedge.video.VideoFrame
+
+private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
 
 @Composable
 fun LiveScreen(
@@ -62,13 +82,74 @@ fun LiveScreen(
     val error          by vm.error.collectAsStateWithLifecycle()
     val recordingState by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
+    val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
+    val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+        else vm.reportError("Camera permission denied — grant it in Settings to use the device camera")
+    }
+
+    // If the LifecycleOwner changes (e.g. Activity re-created after rotation),
+    // re-call useCameraSource so CameraVideoSource holds a current LifecycleOwner.
+    LaunchedEffect(lifecycleOwner) {
+        val facing = cameraFacing
+        if (facing != null && sessionState == SessionState.IDLE) {
+            vm.useCameraSource(facing, context, lifecycleOwner)
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) vm.useFileSource(uri, context)
+    }
+
+    // Register for USB attach/detach/permission broadcasts for as long as the screen is visible.
+    DisposableEffect(Unit) {
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+        val permIntent = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(ACTION_USB_PERMISSION),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                } ?: return
+                when (intent.action) {
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                        if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
+                        else usbManager.requestPermission(device, permIntent)
+                    }
+                    ACTION_USB_PERMISSION -> {
+                        val granted = intent.getBooleanExtra(
+                            UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        if (granted) vm.useUsbSource(device, ctx)
+                    }
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                        vm.reportError("USB camera disconnected")
+                        vm.clearUsbSource()
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(ACTION_USB_PERMISSION)
+        }
+        context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        onDispose { context.unregisterReceiver(receiver) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -79,6 +160,11 @@ fun LiveScreen(
                 uri       = videoUri!!,
                 isPlaying = sessionState == SessionState.RUNNING,
                 modifier  = Modifier.fillMaxSize(),
+            )
+        } else if (cameraFacing != null) {
+            CameraFrameDisplay(
+                frames   = vm.latestFrame,
+                modifier = Modifier.fillMaxSize(),
             )
         } else {
             Box(
@@ -118,8 +204,22 @@ fun LiveScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
             )
-            if (videoUri != null) {
-                Text(
+            when {
+                usbDevice != null -> Text(
+                    text     = "USB: ${usbDevice!!.productName ?: usbDevice!!.deviceName}",
+                    color    = Color(0xFFB0BEC5),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .background(Color(0x80000000))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+                cameraFacing != null -> HudText(
+                    // LENS_FACING_FRONT not yet reachable from UI — front-camera toggle is out of scope for this phase
+                    if (cameraFacing == CameraSelector.LENS_FACING_BACK) "CAM: back" else "CAM: front"
+                )
+                videoUri != null -> Text(
                     text     = "FILE: ${videoUri!!.lastPathSegment ?: "video"}",
                     color    = Color(0xFFB0BEC5),
                     fontSize = 11.sp,
@@ -129,8 +229,7 @@ fun LiveScreen(
                         .background(Color(0x80000000))
                         .padding(horizontal = 4.dp, vertical = 1.dp),
                 )
-            } else {
-                HudText("FAKE SOURCE")
+                else -> HudText("FAKE SOURCE")
             }
         }
 
@@ -227,6 +326,71 @@ fun LiveScreen(
                             ),
                         ) {
                             Text("Clear Video")
+                        }
+                    }
+                }
+
+                // USB camera connect / clear button (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    if (usbDevice == null) {
+                        OutlinedButton(onClick = {
+                            val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                            val uvcDevice = usbManager.deviceList.values.firstOrNull { dev ->
+                                (0 until dev.interfaceCount).any { i ->
+                                    val iface = dev.getInterface(i)
+                                    iface.interfaceClass == 0x0E && iface.interfaceSubclass == 0x02
+                                }
+                            }
+                            if (uvcDevice == null) {
+                                vm.reportError("No UVC camera found — connect a USB camera and try again")
+                            } else if (usbManager.hasPermission(uvcDevice)) {
+                                vm.useUsbSource(uvcDevice, context)
+                            } else {
+                                usbManager.requestPermission(
+                                    uvcDevice,
+                                    PendingIntent.getBroadcast(
+                                        context, 0,
+                                        Intent(ACTION_USB_PERMISSION),
+                                        PendingIntent.FLAG_IMMUTABLE,
+                                    ),
+                                )
+                            }
+                        }) {
+                            Text("USB Cam")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { vm.clearUsbSource() },
+                            colors  = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                        ) {
+                            Text("Clear USB")
+                        }
+                    }
+                }
+
+                // Camera connect / clear button (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    if (cameraFacing == null) {
+                        OutlinedButton(onClick = {
+                            val permission = Manifest.permission.CAMERA
+                            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                                vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+                            } else {
+                                cameraPermissionLauncher.launch(permission)
+                            }
+                        }) {
+                            Text("Camera")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { vm.clearCameraSource() },
+                            colors  = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                        ) {
+                            Text("Clear Cam")
                         }
                     }
                 }
@@ -368,6 +532,36 @@ private fun DetectionOverlay(
                 topLeft          = Offset(l + 4f, t - stripH),
             )
         }
+    }
+}
+
+// ── Camera frame display ──────────────────────────────────────────────────────
+
+@Composable
+private fun CameraFrameDisplay(
+    frames: kotlinx.coroutines.flow.StateFlow<VideoFrame?>,
+    modifier: Modifier = Modifier,
+) {
+    val frame by frames.collectAsStateWithLifecycle()
+    val bmp = frame?.bitmap
+    if (bmp != null && !bmp.isRecycled) {
+        Canvas(modifier = modifier) {
+            // Center-crop: scale to fill while preserving aspect ratio.
+            val scale = maxOf(size.width / bmp.width, size.height / bmp.height)
+            val srcW  = (size.width  / scale).toInt().coerceAtMost(bmp.width)
+            val srcH  = (size.height / scale).toInt().coerceAtMost(bmp.height)
+            val srcX  = (bmp.width  - srcW) / 2
+            val srcY  = (bmp.height - srcH) / 2
+            drawImage(
+                image     = bmp.asImageBitmap(),
+                srcOffset = IntOffset(srcX, srcY),
+                srcSize   = IntSize(srcW, srcH),
+                dstOffset = IntOffset.Zero,
+                dstSize   = IntSize(size.width.toInt(), size.height.toInt()),
+            )
+        }
+    } else {
+        Box(modifier = modifier.background(Color(0xFF0D1117)))
     }
 }
 
