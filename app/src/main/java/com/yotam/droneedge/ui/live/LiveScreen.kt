@@ -9,20 +9,26 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -35,8 +41,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -55,6 +63,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
@@ -62,16 +72,23 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
+import com.yotam.droneedge.ui.theme.FieldAccent
+import com.yotam.droneedge.ui.theme.FieldBackground
+import com.yotam.droneedge.ui.theme.FieldBorder
+import com.yotam.droneedge.ui.theme.FieldRecRed
+import com.yotam.droneedge.ui.theme.FieldRecRedLight
+import com.yotam.droneedge.ui.theme.FieldSurface
+import com.yotam.droneedge.ui.theme.FieldTextMuted
+import com.yotam.droneedge.ui.theme.FieldTextSecondary
 import com.yotam.droneedge.video.VideoFrame
 
 private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
 
 @Composable
 fun LiveScreen(
-    vm: LiveViewModel = viewModel(),
-    onRecordings: () -> Unit = {},
+    vm:        LiveViewModel = viewModel(),
+    onGallery: () -> Unit    = {},
 ) {
     val sessionState   by vm.sessionState.collectAsStateWithLifecycle()
     val detections     by vm.detections.collectAsStateWithLifecycle()
@@ -83,10 +100,13 @@ fun LiveScreen(
     val recordingState by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
     val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
-    val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
+    val cameraFacing   by vm.cameraFacing.collectAsStateWithLifecycle()
 
-    val context = LocalContext.current
+    val context        = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
+
+    var showSourceSheet by remember { mutableStateOf(false) }
+    var showModelSheet  by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -95,8 +115,6 @@ fun LiveScreen(
         else vm.reportError("Camera permission denied — grant it in Settings to use the device camera")
     }
 
-    // If the LifecycleOwner changes (e.g. Activity re-created after rotation),
-    // re-call useCameraSource so CameraVideoSource holds a current LifecycleOwner.
     LaunchedEffect(lifecycleOwner) {
         val facing = cameraFacing
         if (facing != null && sessionState == SessionState.IDLE) {
@@ -110,7 +128,6 @@ fun LiveScreen(
         if (uri != null) vm.useFileSource(uri, context)
     }
 
-    // Register for USB attach/detach/permission broadcasts for as long as the screen is visible.
     DisposableEffect(Unit) {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val permIntent = PendingIntent.getBroadcast(
@@ -132,8 +149,7 @@ fun LiveScreen(
                         else usbManager.requestPermission(device, permIntent)
                     }
                     ACTION_USB_PERMISSION -> {
-                        val granted = intent.getBooleanExtra(
-                            UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                         if (granted) vm.useUsbSource(device, ctx)
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -152,101 +168,113 @@ fun LiveScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // Derived labels
+    val activeSourceChoice: SourceChoice? = when {
+        usbDevice    != null -> SourceChoice.USB
+        cameraFacing != null -> SourceChoice.CAMERA
+        videoUri     != null -> SourceChoice.FILE
+        else                 -> null
+    }
+    val sourceLabel = when {
+        usbDevice    != null -> "USB"
+        cameraFacing != null -> "Camera"
+        videoUri     != null -> "File"
+        else                 -> "No Source"
+    }
+    val modelLabel = when (detectorMode) {
+        DetectorMode.FAKE   -> "Fake"
+        DetectorMode.TFLITE -> "TFLite"
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // ── Background: video or dark canvas ─────────────────────────────────
-        if (videoUri != null) {
-            VideoPlayer(
+        // ── Background ────────────────────────────────────────────────────────
+        when {
+            videoUri != null -> VideoPlayer(
                 uri       = videoUri!!,
                 isPlaying = sessionState == SessionState.RUNNING,
                 modifier  = Modifier.fillMaxSize(),
             )
-        } else if (cameraFacing != null) {
-            CameraFrameDisplay(
+            cameraFacing != null -> CameraFrameDisplay(
                 frames   = vm.latestFrame,
                 modifier = Modifier.fillMaxSize(),
             )
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF0D1117))
+            else -> Box(modifier = Modifier.fillMaxSize().background(FieldBackground))
+        }
+
+        // ── Detection overlay ─────────────────────────────────────────────────
+        DetectionOverlay(detections = detections, modifier = Modifier.fillMaxSize())
+
+        // ── HUD top-left: status + source/model when running ──────────────────
+        Column(
+            modifier            = Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp)
+                .background(Color(0x66000000))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text          = "STATUS",
+                color         = FieldTextMuted.copy(alpha = 0.8f),
+                fontSize      = 9.sp,
+                letterSpacing = 1.sp,
             )
-        }
-
-        // ── Detection overlay (always on top of background) ───────────────────
-        DetectionOverlay(
-            detections = detections,
-            modifier   = Modifier.fillMaxSize(),
-        )
-
-        // ── FPS HUD (top-right) ───────────────────────────────────────────────
-        Column(
-            modifier              = Modifier.align(Alignment.TopEnd).padding(16.dp),
-            horizontalAlignment   = Alignment.End,
-        ) {
-            HudText("Preview   ${"%.1f".format(previewFps)} fps")
-            HudText("Inference ${"%.1f".format(inferenceFps)} fps")
-        }
-
-        // ── Session + source badges (top-left) ────────────────────────────────
-        Column(
-            modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
             Text(
                 text       = sessionState.name,
                 color      = when (sessionState) {
-                    SessionState.RUNNING  -> Color(0xFF00E676)
-                    SessionState.STOPPING -> Color(0xFFFFAB00)
-                    SessionState.IDLE     -> Color(0xFF757575)
+                    SessionState.RUNNING  -> FieldAccent.copy(alpha = 0.85f)
+                    SessionState.STOPPING -> Color(0xCCFFAB00)
+                    SessionState.IDLE     -> FieldTextMuted.copy(alpha = 0.8f)
                 },
                 fontWeight = FontWeight.Bold,
-                fontSize   = 14.sp,
+                fontSize   = 12.sp,
             )
-            when {
-                usbDevice != null -> Text(
-                    text     = "USB: ${usbDevice!!.productName ?: usbDevice!!.deviceName}",
-                    color    = Color(0xFFB0BEC5),
-                    fontSize = 11.sp,
+            if (sessionState == SessionState.RUNNING) {
+                Text(
+                    text     = "$sourceLabel · $modelLabel",
+                    color    = FieldTextMuted.copy(alpha = 0.8f),
+                    fontSize = 9.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .background(Color(0x80000000))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
                 )
-                cameraFacing != null -> HudText(
-                    // LENS_FACING_FRONT not yet reachable from UI — front-camera toggle is out of scope for this phase
-                    if (cameraFacing == CameraSelector.LENS_FACING_BACK) "CAM: back" else "CAM: front"
-                )
-                videoUri != null -> Text(
-                    text     = "FILE: ${videoUri!!.lastPathSegment ?: "video"}",
-                    color    = Color(0xFFB0BEC5),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .background(Color(0x80000000))
-                        .padding(horizontal = 4.dp, vertical = 1.dp),
-                )
-                else -> HudText("FAKE SOURCE")
             }
         }
 
-        // ── Error snackbar (bottom, above controls) ───────────────────────────
+        // ── HUD top-right: FPS ────────────────────────────────────────────────
+        Column(
+            modifier            = Modifier
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+                .background(Color(0x66000000))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text          = "FPS",
+                color         = FieldTextMuted.copy(alpha = 0.8f),
+                fontSize      = 9.sp,
+                letterSpacing = 1.sp,
+            )
+            Text(
+                text  = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
+                color = FieldTextSecondary.copy(alpha = if (sessionState == SessionState.RUNNING) 0.85f else 0.5f),
+                fontSize = 11.sp,
+            )
+        }
+
+        // ── Error snackbar ────────────────────────────────────────────────────
         if (error != null) {
             Snackbar(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 120.dp, start = 16.dp, end = 16.dp),
+                    .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
                 action = {
                     TextButton(onClick = { vm.clearError() }) { Text("Dismiss") }
                 },
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor   = MaterialTheme.colorScheme.onErrorContainer,
-            ) {
-                Text(error!!)
-            }
+            ) { Text(error!!) }
         }
 
         // ── Recording saved snackbar ──────────────────────────────────────────
@@ -254,88 +282,49 @@ fun LiveScreen(
             Snackbar(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 120.dp, start = 16.dp, end = 16.dp),
+                    .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
                 action = {
                     TextButton(onClick = { vm.clearLastRecording() }) { Text("Dismiss") }
                 },
-            ) {
-                Text("Saved to Movies/DroneEdge/")
-            }
+                containerColor = FieldSurface,
+                contentColor   = FieldTextSecondary,
+            ) { Text("Saved to Movies/DroneEdge/") }
         }
 
-        // ── Bottom controls ───────────────────────────────────────────────────
-        Column(
-            modifier            = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 40.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // Detector toggle row (only while idle)
-            if (sessionState == SessionState.IDLE) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment     = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text     = "Detector:",
-                        color    = Color(0xFFB0BEC5),
-                        fontSize = 12.sp,
-                    )
-                    OutlinedButton(
-                        onClick = { vm.setDetectorMode(DetectorMode.FAKE) },
-                        colors  = if (detectorMode == DetectorMode.FAKE)
-                            ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor   = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        else ButtonDefaults.outlinedButtonColors(),
-                    ) { Text("Fake") }
-                    OutlinedButton(
-                        onClick = { vm.setDetectorMode(DetectorMode.TFLITE, context) },
-                        colors  = if (detectorMode == DetectorMode.TFLITE)
-                            ButtonDefaults.outlinedButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                contentColor   = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        else ButtonDefaults.outlinedButtonColors(),
-                    ) { Text("TFLite") }
-                }
-            }
+        // ── Bottom bar ────────────────────────────────────────────────────────
+        BottomBar(
+            modifier       = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            sessionState   = sessionState,
+            recordingState = recordingState,
+            sourceLabel    = sourceLabel,
+            modelLabel     = modelLabel,
+            onSourceClick  = { showSourceSheet = true },
+            onModelClick   = { showModelSheet  = true },
+            onGallery      = onGallery,
+            onStart        = { vm.start() },
+            onStop         = { vm.stop() },
+            onArmRecording = { vm.armRecording() },
+        )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment     = Alignment.CenterVertically,
-            ) {
-                // Recordings browser (only while idle)
-                if (sessionState == SessionState.IDLE) {
-                    OutlinedButton(onClick = onRecordings) { Text("Recordings") }
-                }
-
-                // File picker / clear button (only while idle)
-                if (sessionState == SessionState.IDLE) {
-                    if (videoUri == null) {
-                        OutlinedButton(onClick = { filePicker.launch("video/*") }) {
-                            Text("Pick Video")
+        // ── Sheets ────────────────────────────────────────────────────────────
+        if (showSourceSheet) {
+            SourceSheet(
+                activeChoice = activeSourceChoice,
+                onDismiss    = { showSourceSheet = false },
+                onSelect     = { choice ->
+                    showSourceSheet = false
+                    when (choice) {
+                        SourceChoice.CAMERA -> {
+                            val permission = Manifest.permission.CAMERA
+                            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                                vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+                            } else {
+                                cameraPermissionLauncher.launch(permission)
+                            }
                         }
-                    } else {
-                        OutlinedButton(
-                            onClick = { vm.useFakeSource() },
-                            colors  = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            ),
-                        ) {
-                            Text("Clear Video")
-                        }
-                    }
-                }
-
-                // USB camera connect / clear button (only while idle)
-                if (sessionState == SessionState.IDLE) {
-                    if (usbDevice == null) {
-                        OutlinedButton(onClick = {
+                        SourceChoice.USB -> {
                             val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-                            val uvcDevice = usbManager.deviceList.values.firstOrNull { dev ->
+                            val uvcDevice  = usbManager.deviceList.values.firstOrNull { dev ->
                                 (0 until dev.interfaceCount).any { i ->
                                     val iface = dev.getInterface(i)
                                     iface.interfaceClass == 0x0E && iface.interfaceSubclass == 0x02
@@ -355,182 +344,210 @@ fun LiveScreen(
                                     ),
                                 )
                             }
-                        }) {
-                            Text("USB Cam")
                         }
-                    } else {
-                        OutlinedButton(
-                            onClick = { vm.clearUsbSource() },
-                            colors  = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            ),
-                        ) {
-                            Text("Clear USB")
-                        }
+                        SourceChoice.FILE -> filePicker.launch("video/*")
+                        SourceChoice.FAKE -> vm.useFakeSource()
                     }
-                }
-
-                // Camera connect / clear button (only while idle)
-                if (sessionState == SessionState.IDLE) {
-                    if (cameraFacing == null) {
-                        OutlinedButton(onClick = {
-                            val permission = Manifest.permission.CAMERA
-                            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
-                                vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
-                            } else {
-                                cameraPermissionLauncher.launch(permission)
-                            }
-                        }) {
-                            Text("Camera")
-                        }
-                    } else {
-                        OutlinedButton(
-                            onClick = { vm.clearCameraSource() },
-                            colors  = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            ),
-                        ) {
-                            Text("Clear Cam")
-                        }
-                    }
-                }
-
-                // Recording indicator (only while running)
-                if (sessionState == SessionState.RUNNING) {
-                    when (recordingState) {
-                        // Shouldn't normally appear (auto-armed on start) but allows re-arm if
-                        // the user manually stopped recording mid-session.
-                        RecordingState.IDLE -> OutlinedButton(
-                            onClick = { vm.armRecording() },
-                        ) { Text("REC") }
-
-                        RecordingState.ARMED -> Button(
-                            onClick  = { vm.disarmRecording() },
-                            enabled  = false,
-                            colors   = ButtonDefaults.buttonColors(
-                                disabledContainerColor = Color(0xFFD32F2F),
-                                disabledContentColor   = Color.White,
-                            ),
-                        ) { Text("● REC") }
-
-                        RecordingState.FINALIZING -> OutlinedButton(
-                            onClick  = {},
-                            enabled  = false,
-                        ) { Text("Saving…") }
-                    }
-                }
-
-                // Start / Stop
-                Button(
-                    onClick = {
-                        when (sessionState) {
-                            SessionState.IDLE     -> vm.start()
-                            SessionState.RUNNING  -> vm.stop()
-                            SessionState.STOPPING -> Unit
-                        }
-                    },
-                    enabled = sessionState != SessionState.STOPPING,
-                ) {
-                    Text(
-                        text = when (sessionState) {
-                            SessionState.IDLE     -> "Start"
-                            SessionState.RUNNING  -> "Stop"
-                            SessionState.STOPPING -> "Stopping…"
-                        }
-                    )
-                }
-            }
+                },
+            )
         }
+
+        if (showModelSheet) {
+            ModelSheet(
+                currentMode       = detectorMode,
+                isTfliteAvailable = runCatching {
+                    context.assets.open("detect.tflite").close(); true
+                }.getOrDefault(false),
+                onDismiss = { showModelSheet = false },
+                onSelect  = { mode ->
+                    showModelSheet = false
+                    vm.setDetectorMode(mode, context)
+                },
+            )
+        }
+    }
+}
+
+// ── Bottom bar ────────────────────────────────────────────────────────────────
+
+@Composable
+private fun BottomBar(
+    modifier:       Modifier,
+    sessionState:   SessionState,
+    recordingState: RecordingState,
+    sourceLabel:    String,
+    modelLabel:     String,
+    onSourceClick:  () -> Unit,
+    onModelClick:   () -> Unit,
+    onGallery:      () -> Unit,
+    onStart:        () -> Unit,
+    onStop:         () -> Unit,
+    onArmRecording: () -> Unit,
+) {
+    Row(
+        modifier              = modifier
+            .background(Color(0xEE111111))
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (sessionState == SessionState.IDLE) {
+            OutlinedButton(
+                onClick = onSourceClick,
+                colors  = ButtonDefaults.outlinedButtonColors(
+                    contentColor = FieldAccent,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FieldAccent),
+            ) { Text("$sourceLabel ▾", fontSize = 12.sp) }
+
+            OutlinedButton(
+                onClick = onModelClick,
+                colors  = ButtonDefaults.outlinedButtonColors(
+                    contentColor = FieldTextSecondary,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
+            ) { Text("$modelLabel ▾", fontSize = 12.sp) }
+
+            OutlinedButton(
+                onClick = onGallery,
+                colors  = ButtonDefaults.outlinedButtonColors(
+                    contentColor = FieldTextMuted,
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
+            ) { Text("Gallery", fontSize = 12.sp) }
+        }
+
+        if (sessionState == SessionState.RUNNING) {
+            RecButton(recordingState = recordingState, onArmRecording = onArmRecording)
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Button(
+            onClick  = { if (sessionState == SessionState.IDLE) onStart() else onStop() },
+            enabled  = sessionState != SessionState.STOPPING,
+            colors   = ButtonDefaults.buttonColors(
+                containerColor = FieldAccent,
+                contentColor   = Color.Black,
+            ),
+        ) {
+            Text(
+                text       = when (sessionState) {
+                    SessionState.IDLE     -> "START"
+                    SessionState.RUNNING  -> "STOP"
+                    SessionState.STOPPING -> "STOPPING"
+                },
+                fontWeight    = FontWeight.Bold,
+                letterSpacing = 0.5.sp,
+                fontSize      = 12.sp,
+            )
+        }
+    }
+}
+
+// ── Breathing REC button ──────────────────────────────────────────────────────
+
+@Composable
+private fun RecButton(recordingState: RecordingState, onArmRecording: () -> Unit) {
+    val infiniteTransition = rememberInfiniteTransition(label = "rec")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue  = 0.2f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(700, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "recDotAlpha",
+    )
+
+    when (recordingState) {
+        RecordingState.IDLE -> OutlinedButton(
+            onClick = onArmRecording,
+            colors  = ButtonDefaults.outlinedButtonColors(contentColor = FieldRecRedLight),
+            border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
+        ) { Text("REC", fontSize = 12.sp) }
+
+        RecordingState.ARMED -> OutlinedButton(
+            onClick = {},
+            colors  = ButtonDefaults.outlinedButtonColors(
+                containerColor = Color(0x331A0000),
+                contentColor   = FieldRecRedLight,
+            ),
+            border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
+        ) {
+            Text(
+                text       = "● REC",
+                fontSize   = 12.sp,
+                color      = FieldRecRedLight.copy(alpha = dotAlpha),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        RecordingState.FINALIZING -> OutlinedButton(
+            onClick  = {},
+            enabled  = false,
+            colors   = ButtonDefaults.outlinedButtonColors(contentColor = FieldTextMuted),
+            border   = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
+        ) { Text("Saving…", fontSize = 12.sp) }
     }
 }
 
 // ── Video player ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun VideoPlayer(
-    uri: Uri,
-    isPlaying: Boolean,
-    modifier: Modifier = Modifier,
-) {
+private fun VideoPlayer(uri: Uri, isPlaying: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-
     val exoPlayer = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
-            repeatMode = Player.REPEAT_MODE_ONE
+            repeatMode    = Player.REPEAT_MODE_ONE
             playWhenReady = false
             prepare()
         }
     }
-
-    // Start/stop driven by session state
-    LaunchedEffect(isPlaying) {
-        exoPlayer.playWhenReady = isPlaying
-    }
-
-    // Release when leaving composition or when URI changes
-    DisposableEffect(uri) {
-        onDispose { exoPlayer.release() }
-    }
-
+    LaunchedEffect(isPlaying) { exoPlayer.playWhenReady = isPlaying }
+    DisposableEffect(uri) { onDispose { exoPlayer.release() } }
     AndroidView(
         modifier = modifier,
         factory  = { ctx ->
             PlayerView(ctx).apply {
-                player         = exoPlayer
-                useController  = false                             // our own controls
-                resizeMode     = AspectRatioFrameLayout.RESIZE_MODE_ZOOM // fill, keep AR
+                player        = exoPlayer
+                useController = false
+                resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             }
         },
-        update = { playerView -> playerView.player = exoPlayer },
+        update = { it.player = exoPlayer },
     )
 }
 
 // ── Detection overlay ─────────────────────────────────────────────────────────
 
-private val boxColor     = Color(0xFF00E5FF)
+private val boxColor     = FieldAccent
 private val labelBgColor = Color(0xCC000000)
 private val labelStyle   = TextStyle(fontSize = 11.sp, color = Color.White)
 
 @Composable
-private fun DetectionOverlay(
-    detections: List<Detection>,
-    modifier: Modifier = Modifier,
-) {
+private fun DetectionOverlay(detections: List<Detection>, modifier: Modifier = Modifier) {
     val textMeasurer = rememberTextMeasurer()
-
     Canvas(modifier = modifier) {
         val cw = size.width
         val ch = size.height
-
         detections.forEach { det ->
             val box = det.boundingBox
             val l = box.left   * cw
             val t = box.top    * ch
             val r = box.right  * cw
             val b = box.bottom * ch
-
-            drawRect(
-                color   = boxColor,
-                topLeft = Offset(l, t),
-                size    = Size(r - l, b - t),
-                style   = Stroke(width = 3f),
-            )
-
-            val labelText = "${det.label} ${"%.0f".format(det.confidence * 100)}%"
-            val measured  = textMeasurer.measure(labelText, style = labelStyle)
-            val stripH    = measured.size.height.toFloat()
-
+            drawRect(color = boxColor, topLeft = Offset(l, t), size = Size(r - l, b - t), style = Stroke(3f))
+            val label    = "${det.label} ${"%.0f".format(det.confidence * 100)}%"
+            val measured = textMeasurer.measure(label, style = labelStyle)
+            val stripH   = measured.size.height.toFloat()
             drawRect(
                 color   = labelBgColor,
                 topLeft = Offset(l, t - stripH),
                 size    = Size(maxOf(r - l, measured.size.width.toFloat()), stripH),
             )
-
-            drawText(
-                textLayoutResult = measured,
-                topLeft          = Offset(l + 4f, t - stripH),
-            )
+            drawText(textLayoutResult = measured, topLeft = Offset(l + 4f, t - stripH))
         }
     }
 }
@@ -539,14 +556,13 @@ private fun DetectionOverlay(
 
 @Composable
 private fun CameraFrameDisplay(
-    frames: kotlinx.coroutines.flow.StateFlow<VideoFrame?>,
+    frames:   kotlinx.coroutines.flow.StateFlow<VideoFrame?>,
     modifier: Modifier = Modifier,
 ) {
     val frame by frames.collectAsStateWithLifecycle()
-    val bmp = frame?.bitmap
+    val bmp   = frame?.bitmap
     if (bmp != null && !bmp.isRecycled) {
         Canvas(modifier = modifier) {
-            // Center-crop: scale to fill while preserving aspect ratio.
             val scale = maxOf(size.width / bmp.width, size.height / bmp.height)
             val srcW  = (size.width  / scale).toInt().coerceAtMost(bmp.width)
             val srcH  = (size.height / scale).toInt().coerceAtMost(bmp.height)
@@ -561,21 +577,6 @@ private fun CameraFrameDisplay(
             )
         }
     } else {
-        Box(modifier = modifier.background(Color(0xFF0D1117)))
+        Box(modifier = modifier.background(FieldBackground))
     }
-}
-
-// ── HUD text ──────────────────────────────────────────────────────────────────
-
-@Composable
-private fun HudText(text: String) {
-    Text(
-        text       = text,
-        color      = Color(0xFFE0E0E0),
-        fontSize   = 12.sp,
-        fontWeight = FontWeight.Medium,
-        modifier   = Modifier
-            .background(Color(0x80000000))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
 }
