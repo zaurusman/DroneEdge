@@ -42,9 +42,14 @@ class UsbUvcVideoSource(
             assembler.reset()
 
             val buf = ByteArray(16_384)
+            var consecutiveErrors = 0
             while (running) {
                 val len = connection.bulkTransfer(info.endpoint, buf, buf.size, 1_000)
-                if (len < 0) continue
+                if (len < 0) {
+                    if (++consecutiveErrors >= 10) break
+                    continue
+                }
+                consecutiveErrors = 0
 
                 val jpeg = assembler.feed(buf, len) ?: continue
                 val bmp  = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: continue
@@ -113,6 +118,7 @@ class UsbUvcVideoSource(
         }
         // bmRequestType=0x21 Class|Interface|H→D, bRequest=SET_CUR(0x01)
         // wValue=VS_COMMIT_CONTROL (selector 0x02 shifted to high byte = 0x0200)
-        connection.controlTransfer(0x21, 0x01, 0x0200, vsIfaceNumber, ctrl, ctrl.size, 1_000)
+        val result = connection.controlTransfer(0x21, 0x01, 0x0200, vsIfaceNumber, ctrl, ctrl.size, 1_000)
+        check(result >= 0) { "VS_COMMIT_CONTROL failed (result=$result) — camera may not support MJPEG format index 1" }
     }
 }
