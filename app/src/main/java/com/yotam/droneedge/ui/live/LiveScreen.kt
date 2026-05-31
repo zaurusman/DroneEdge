@@ -1,5 +1,12 @@
 package com.yotam.droneedge.ui.live
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +55,8 @@ import androidx.media3.ui.PlayerView
 import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
 
+private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
+
 @Composable
 fun LiveScreen(
     vm: LiveViewModel = viewModel(),
@@ -62,6 +71,7 @@ fun LiveScreen(
     val error          by vm.error.collectAsStateWithLifecycle()
     val recordingState by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
+    val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -69,6 +79,41 @@ fun LiveScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) vm.useFileSource(uri, context)
+    }
+
+    // Register for USB attach/detach/permission broadcasts for as long as the screen is visible.
+    DisposableEffect(Unit) {
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+        val permIntent = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(ACTION_USB_PERMISSION),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    ?: return
+                when (intent.action) {
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                        if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
+                        else usbManager.requestPermission(device, permIntent)
+                    }
+                    ACTION_USB_PERMISSION -> {
+                        val granted = intent.getBooleanExtra(
+                            UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        if (granted) vm.useUsbSource(device, ctx)
+                    }
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> vm.clearUsbSource()
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction(ACTION_USB_PERMISSION)
+        }
+        context.registerReceiver(receiver, filter)
+        onDispose { context.unregisterReceiver(receiver) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -118,8 +163,18 @@ fun LiveScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize   = 14.sp,
             )
-            if (videoUri != null) {
-                Text(
+            when {
+                usbDevice != null -> Text(
+                    text     = "USB: ${usbDevice!!.productName ?: usbDevice!!.deviceName}",
+                    color    = Color(0xFFB0BEC5),
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .background(Color(0x80000000))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+                videoUri != null -> Text(
                     text     = "FILE: ${videoUri!!.lastPathSegment ?: "video"}",
                     color    = Color(0xFFB0BEC5),
                     fontSize = 11.sp,
@@ -129,8 +184,7 @@ fun LiveScreen(
                         .background(Color(0x80000000))
                         .padding(horizontal = 4.dp, vertical = 1.dp),
                 )
-            } else {
-                HudText("FAKE SOURCE")
+                else -> HudText("FAKE SOURCE")
             }
         }
 
@@ -227,6 +281,46 @@ fun LiveScreen(
                             ),
                         ) {
                             Text("Clear Video")
+                        }
+                    }
+                }
+
+                // USB camera connect / clear button (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    if (usbDevice == null) {
+                        OutlinedButton(onClick = {
+                            val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                            val uvcDevice = usbManager.deviceList.values.firstOrNull { dev ->
+                                (0 until dev.interfaceCount).any { i ->
+                                    val iface = dev.getInterface(i)
+                                    iface.interfaceClass == 0x0E && iface.interfaceSubclass == 0x02
+                                }
+                            }
+                            if (uvcDevice == null) {
+                                vm.reportError("No UVC camera found — connect a USB camera and try again")
+                            } else if (usbManager.hasPermission(uvcDevice)) {
+                                vm.useUsbSource(uvcDevice, context)
+                            } else {
+                                usbManager.requestPermission(
+                                    uvcDevice,
+                                    PendingIntent.getBroadcast(
+                                        context, 0,
+                                        Intent(ACTION_USB_PERMISSION),
+                                        PendingIntent.FLAG_IMMUTABLE,
+                                    ),
+                                )
+                            }
+                        }) {
+                            Text("USB Cam")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { vm.clearUsbSource() },
+                            colors  = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                        ) {
+                            Text("Clear USB")
                         }
                     }
                 }
