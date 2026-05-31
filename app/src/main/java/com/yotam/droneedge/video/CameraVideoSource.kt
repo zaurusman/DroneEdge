@@ -54,6 +54,7 @@ class CameraVideoSource(
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .build()
             .also { ia ->
                 ia.setAnalyzer(executor) { proxy ->
@@ -87,7 +88,9 @@ class CameraVideoSource(
         }
 
         awaitClose {
-            provider.unbind(analysis)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                provider.unbind(analysis)
+            }
             executor.shutdown()
         }
     }

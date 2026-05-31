@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -61,6 +62,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
+import com.yotam.droneedge.video.VideoFrame
 
 private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
 
@@ -80,6 +82,7 @@ fun LiveScreen(
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
     val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
+    val latestFrame    by vm.latestFrame.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
@@ -91,8 +94,8 @@ fun LiveScreen(
         else vm.reportError("Camera permission denied — grant it in Settings to use the device camera")
     }
 
-    // Re-create CameraVideoSource after configuration changes (rotation) so the stored
-    // LifecycleOwner is always current. Only re-creates when camera is already selected and IDLE.
+    // If the LifecycleOwner changes (e.g. Activity re-created after rotation),
+    // re-call useCameraSource so CameraVideoSource holds a current LifecycleOwner.
     LaunchedEffect(lifecycleOwner) {
         val facing = cameraFacing
         if (facing != null && sessionState == SessionState.IDLE) {
@@ -156,6 +159,11 @@ fun LiveScreen(
                 uri       = videoUri!!,
                 isPlaying = sessionState == SessionState.RUNNING,
                 modifier  = Modifier.fillMaxSize(),
+            )
+        } else if (cameraFacing != null) {
+            CameraFrameDisplay(
+                frame    = latestFrame,
+                modifier = Modifier.fillMaxSize(),
             )
         } else {
             Box(
@@ -523,6 +531,23 @@ private fun DetectionOverlay(
                 topLeft          = Offset(l + 4f, t - stripH),
             )
         }
+    }
+}
+
+// ── Camera frame display ──────────────────────────────────────────────────────
+
+@Composable
+private fun CameraFrameDisplay(
+    frame: VideoFrame?,
+    modifier: Modifier = Modifier,
+) {
+    val bmp = frame?.bitmap
+    if (bmp != null && !bmp.isRecycled) {
+        Canvas(modifier = modifier) {
+            drawImage(bmp.asImageBitmap())
+        }
+    } else {
+        Box(modifier = modifier.background(Color(0xFF0D1117)))
     }
 }
 

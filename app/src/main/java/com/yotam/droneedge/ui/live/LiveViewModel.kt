@@ -90,6 +90,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _inferenceFps = MutableStateFlow(0f)
     val inferenceFps: StateFlow<Float> = _inferenceFps.asStateFlow()
 
+    // ── Latest frame (exposed for camera preview rendering) ──────────────────
+    private val _latestFrame = MutableStateFlow<VideoFrame?>(null)
+    val latestFrame: StateFlow<VideoFrame?> = _latestFrame.asStateFlow()
+
     private var lastPreviewFrameMs = 0L
     private var lastInferenceMs = 0L
     private var pipelineJob: Job? = null
@@ -144,6 +148,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (_sessionState.value == SessionState.IDLE) {
             videoSource = FakeVideoSource()
         }
+        // If RUNNING, the camera flow completes when pipelineJob is cancelled (via stop()).
+        // CameraVideoSource has no self-exit mechanism; the session must be stopped manually.
     }
 
     /** Called from MainActivity when the app is launched by a USB_DEVICE_ATTACHED intent. */
@@ -233,11 +239,6 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         armRecording()
 
         pipelineJob = viewModelScope.launch {
-            // Latest frame shared between the two coroutines below.
-            // StateFlow is conflated — if inference is slow, it naturally picks up
-            // the most recent frame instead of queuing up every intermediate one.
-            val latestFrame = MutableStateFlow<VideoFrame?>(null)
-
             // Coroutine 1: collect frames at full source speed, track preview FPS.
             launch {
                 videoSource.frames.collect { frame ->
@@ -248,7 +249,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                             _previewFps.value * 0.85f + (1000f / dt) * 0.15f
                     }
                     lastPreviewFrameMs = now
-                    latestFrame.value = frame
+                    _latestFrame.value = frame
                 }
                 // Flow ended without an explicit stop() — source disconnected or failed.
                 if (_sessionState.value == SessionState.RUNNING) {
@@ -260,7 +261,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             // Coroutine 2: run inference on latest available frame; skips frames
             // automatically when inference is slower than the source frame rate.
             launch(Dispatchers.Default) {
-                latestFrame.filterNotNull().collect { frame ->
+                _latestFrame.filterNotNull().collect { frame ->
                     val results = detector.detect(frame)
                     _detections.value = results
 
@@ -290,6 +291,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _detections.value = emptyList()
         _previewFps.value = 0f
         _inferenceFps.value = 0f
+        _latestFrame.value = null
         _sessionState.value = SessionState.IDLE
     }
 
