@@ -1,6 +1,8 @@
 package com.yotam.droneedge.video
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -59,7 +61,13 @@ class CameraVideoSource(
             .also { ia ->
                 ia.setAnalyzer(executor) { proxy ->
                     try {
-                        val bmp = proxy.toBitmap()
+                        val raw = proxy.toBitmap()
+                        val deg = proxy.imageInfo.rotationDegrees
+                        val bmp = if (deg != 0) {
+                            Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height,
+                                Matrix().apply { postRotate(deg.toFloat()) }, true)
+                                .also { raw.recycle() }
+                        } else raw
                         val w = bmp.width
                         val h = bmp.height
                         width = w

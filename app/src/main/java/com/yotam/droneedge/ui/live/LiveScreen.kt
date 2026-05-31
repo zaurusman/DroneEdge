@@ -546,10 +546,16 @@ private fun CameraFrameDisplay(
     val bmp = frame?.bitmap
     if (bmp != null && !bmp.isRecycled) {
         Canvas(modifier = modifier) {
+            // Center-crop: scale to fill while preserving aspect ratio.
+            val scale = maxOf(size.width / bmp.width, size.height / bmp.height)
+            val srcW  = (size.width  / scale).toInt().coerceAtMost(bmp.width)
+            val srcH  = (size.height / scale).toInt().coerceAtMost(bmp.height)
+            val srcX  = (bmp.width  - srcW) / 2
+            val srcY  = (bmp.height - srcH) / 2
             drawImage(
                 image     = bmp.asImageBitmap(),
-                srcOffset = IntOffset.Zero,
-                srcSize   = IntSize(bmp.width, bmp.height),
+                srcOffset = IntOffset(srcX, srcY),
+                srcSize   = IntSize(srcW, srcH),
                 dstOffset = IntOffset.Zero,
                 dstSize   = IntSize(size.width.toInt(), size.height.toInt()),
             )
