@@ -1,9 +1,12 @@
 package com.yotam.droneedge.ui.live
 
 import android.app.Application
+import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.net.Uri
+import androidx.camera.core.CameraSelector
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
 import com.yotam.droneedge.detection.Detection
 import com.yotam.droneedge.detection.Detector
@@ -12,6 +15,7 @@ import com.yotam.droneedge.detection.TfliteDetector
 import com.yotam.droneedge.recording.RecordingResult
 import com.yotam.droneedge.recording.SessionRecorder
 import com.yotam.droneedge.recording.VideoSessionRecorder
+import com.yotam.droneedge.video.CameraVideoSource
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
 import com.yotam.droneedge.video.UsbUvcVideoSource
@@ -50,6 +54,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── USB device (null = no USB source) ────────────────────────────────────
     private val _usbDevice = MutableStateFlow<UsbDevice?>(null)
     val usbDevice: StateFlow<UsbDevice?> = _usbDevice.asStateFlow()
+
+    // ── Camera facing (null = no camera source) ───────────────────────────────
+    private val _cameraFacing = MutableStateFlow<Int?>(null)
+    val cameraFacing: StateFlow<Int?> = _cameraFacing.asStateFlow()
 
     // ── Detector mode ─────────────────────────────────────────────────────────
     private val _detectorMode = MutableStateFlow(DetectorMode.FAKE)
@@ -93,6 +101,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         videoSource      = FileReplayVideoSource(uri, context.applicationContext)
         _videoUri.value  = uri
         _usbDevice.value = null
+        _cameraFacing.value = null
     }
 
     fun useFakeSource() {
@@ -100,6 +109,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         videoSource      = FakeVideoSource()
         _videoUri.value  = null
         _usbDevice.value = null
+        _cameraFacing.value = null
     }
 
     fun useUsbSource(device: UsbDevice, context: android.content.Context) {
@@ -107,6 +117,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         videoSource      = UsbUvcVideoSource(context.applicationContext, device)
         _usbDevice.value = device
         _videoUri.value  = null
+        _cameraFacing.value = null
     }
 
     fun clearUsbSource() {
@@ -117,6 +128,22 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         }
         // If RUNNING, the USB source will exhaust its error counter and stop naturally.
         // Fix 1 (flow-completion auto-stop) will handle session cleanup.
+    }
+
+    fun useCameraSource(facing: Int, context: Context, lifecycleOwner: LifecycleOwner) {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource         = CameraVideoSource(context.applicationContext, lifecycleOwner, facing)
+        _cameraFacing.value = facing
+        _videoUri.value     = null
+        _usbDevice.value    = null
+    }
+
+    fun clearCameraSource() {
+        if (_cameraFacing.value == null) return
+        _cameraFacing.value = null
+        if (_sessionState.value == SessionState.IDLE) {
+            videoSource = FakeVideoSource()
+        }
     }
 
     /** Called from MainActivity when the app is launched by a USB_DEVICE_ATTACHED intent. */
