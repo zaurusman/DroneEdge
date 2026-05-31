@@ -36,6 +36,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -81,19 +82,20 @@ fun LiveScreen(
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+        else vm.reportError("Camera permission denied — grant it in Settings to use the device camera")
     }
 
     // Re-create CameraVideoSource after configuration changes (rotation) so the stored
     // LifecycleOwner is always current. Only re-creates when camera is already selected and IDLE.
     LaunchedEffect(lifecycleOwner) {
-        val facing = vm.cameraFacing.value
-        if (facing != null && vm.sessionState.value == SessionState.IDLE) {
+        val facing = cameraFacing
+        if (facing != null && sessionState == SessionState.IDLE) {
             vm.useCameraSource(facing, context, lifecycleOwner)
         }
     }
@@ -205,6 +207,7 @@ fun LiveScreen(
                         .padding(horizontal = 4.dp, vertical = 1.dp),
                 )
                 cameraFacing != null -> HudText(
+                    // LENS_FACING_FRONT not yet reachable from UI — front-camera toggle is out of scope for this phase
                     if (cameraFacing == CameraSelector.LENS_FACING_BACK) "CAM: back" else "CAM: front"
                 )
                 videoUri != null -> Text(
