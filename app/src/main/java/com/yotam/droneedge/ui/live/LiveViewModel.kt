@@ -110,11 +110,28 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearUsbSource() {
-        if (_sessionState.value != SessionState.IDLE) return
-        if (_usbDevice.value != null) {
-            videoSource      = FakeVideoSource()
-            _usbDevice.value = null
+        if (_usbDevice.value == null) return
+        _usbDevice.value = null
+        if (_sessionState.value == SessionState.IDLE) {
+            videoSource = FakeVideoSource()
         }
+        // If RUNNING, the USB source will exhaust its error counter and stop naturally.
+        // Fix 1 (flow-completion auto-stop) will handle session cleanup.
+    }
+
+    /** Called from MainActivity when the app is launched by a USB_DEVICE_ATTACHED intent. */
+    fun handleUsbLaunchIntent(intent: android.content.Intent, context: android.content.Context) {
+        val device = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
+        } ?: return
+        val usbManager = context.getSystemService(android.content.Context.USB_SERVICE) as android.hardware.usb.UsbManager
+        if (usbManager.hasPermission(device)) {
+            useUsbSource(device, context)
+        }
+        // If no permission, the BroadcastReceiver in LiveScreen will handle the permission flow.
     }
 
     fun reportError(message: String) {
@@ -205,6 +222,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     lastPreviewFrameMs = now
                     latestFrame.value = frame
+                }
+                // Flow ended without an explicit stop() — source disconnected or failed.
+                if (_sessionState.value == SessionState.RUNNING) {
+                    _error.value = "Video source disconnected"
+                    stop()
                 }
             }
 
