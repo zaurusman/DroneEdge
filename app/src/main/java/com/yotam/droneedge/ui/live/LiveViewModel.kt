@@ -1,6 +1,7 @@
 package com.yotam.droneedge.ui.live
 
 import android.app.Application
+import android.hardware.usb.UsbDevice
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,6 +14,7 @@ import com.yotam.droneedge.recording.SessionRecorder
 import com.yotam.droneedge.recording.VideoSessionRecorder
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
+import com.yotam.droneedge.video.UsbUvcVideoSource
 import com.yotam.droneedge.video.VideoFrame
 import com.yotam.droneedge.video.VideoSource
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── Video URI (null = fake source) ────────────────────────────────────────
     private val _videoUri = MutableStateFlow<Uri?>(null)
     val videoUri: StateFlow<Uri?> = _videoUri.asStateFlow()
+
+    // ── USB device (null = no USB source) ────────────────────────────────────
+    private val _usbDevice = MutableStateFlow<UsbDevice?>(null)
+    val usbDevice: StateFlow<UsbDevice?> = _usbDevice.asStateFlow()
 
     // ── Detector mode ─────────────────────────────────────────────────────────
     private val _detectorMode = MutableStateFlow(DetectorMode.FAKE)
@@ -90,8 +96,28 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun useFakeSource() {
         if (_sessionState.value != SessionState.IDLE) return
-        videoSource = FakeVideoSource()
-        _videoUri.value = null
+        videoSource      = FakeVideoSource()
+        _videoUri.value  = null
+        _usbDevice.value = null
+    }
+
+    fun useUsbSource(device: UsbDevice, context: android.content.Context) {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource      = UsbUvcVideoSource(context.applicationContext, device)
+        _usbDevice.value = device
+        _videoUri.value  = null
+    }
+
+    fun clearUsbSource() {
+        if (_sessionState.value != SessionState.IDLE) return
+        if (_usbDevice.value != null) {
+            videoSource      = FakeVideoSource()
+            _usbDevice.value = null
+        }
+    }
+
+    fun reportError(message: String) {
+        _error.value = message
     }
 
     // ── Detector selection (only while IDLE) ──────────────────────────────────
