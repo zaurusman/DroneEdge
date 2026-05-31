@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,8 +92,12 @@ fun LiveScreen(
         )
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
-                val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    ?: return
+                val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                } ?: return
                 when (intent.action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                         if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
@@ -103,7 +108,10 @@ fun LiveScreen(
                             UsbManager.EXTRA_PERMISSION_GRANTED, false)
                         if (granted) vm.useUsbSource(device, ctx)
                     }
-                    UsbManager.ACTION_USB_DEVICE_DETACHED -> vm.clearUsbSource()
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                        vm.reportError("USB camera disconnected")
+                        vm.clearUsbSource()
+                    }
                 }
             }
         }
@@ -112,7 +120,7 @@ fun LiveScreen(
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
             addAction(ACTION_USB_PERMISSION)
         }
-        context.registerReceiver(receiver, filter)
+        context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         onDispose { context.unregisterReceiver(receiver) }
     }
 
