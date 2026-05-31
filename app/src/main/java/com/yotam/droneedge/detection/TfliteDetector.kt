@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import com.yotam.droneedge.video.VideoFrame
 import org.tensorflow.lite.Interpreter
 import java.io.Closeable
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -14,14 +15,12 @@ import java.nio.channels.FileChannel
 /**
  * On-device object detector backed by a TensorFlow Lite model.
  *
- * Loads [modelFileName] and [labelsFileName] from the app's assets folder at construction time.
- * Inference is always called from [Dispatchers.Default] by [LiveViewModel] — this class is
- * not thread-safe; do not share it across threads.
+ * When [modelFile] is provided it is loaded from the filesystem (e.g. external storage pushed
+ * via ADB); otherwise [modelFileName] is loaded from assets. Labels are resolved similarly:
+ * a sidecar "<model-name>.txt" next to [modelFile] takes priority, falling back to [labelsFileName]
+ * in assets.
  *
- * Returns an empty list when [VideoFrame.bitmap] is null (e.g. FakeVideoSource frames).
- *
- * @param outputParser  Pluggable output parser — default is [SsdOutputParser] which handles
- *                      SSD MobileNet V1/V2 and EfficientDet-Lite model output formats.
+ * Inference is always called from [Dispatchers.Default] by [LiveViewModel] — not thread-safe.
  */
 class TfliteDetector(
     context: Context,
@@ -31,16 +30,18 @@ class TfliteDetector(
     private val inputWidth: Int = 300,
     private val inputHeight: Int = 300,
     val confidenceThreshold: Float = 0.5f,
+    modelFile: File? = null,
 ) : Detector, Closeable {
 
     private val interpreter: Interpreter
     val labels: List<String>
 
     init {
-        val model = loadModelFile(context, modelFileName)
+        val model = if (modelFile != null) loadModelFromFile(modelFile)
+                    else loadModelFile(context, modelFileName)
         val options = Interpreter.Options().apply { numThreads = 4 }
         interpreter = Interpreter(model, options)
-        labels = loadLabels(context, labelsFileName)
+        labels = loadLabelsForModel(context, modelFile, labelsFileName)
     }
 
     override suspend fun detect(frame: VideoFrame): List<Detection> {
@@ -74,8 +75,16 @@ class TfliteDetector(
         )
     }
 
-    private fun loadLabels(context: Context, fileName: String): List<String> =
-        context.assets.open(fileName).bufferedReader().readLines()
+    private fun loadModelFromFile(file: File): MappedByteBuffer =
+        FileInputStream(file).channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
+
+    private fun loadLabelsForModel(context: Context, modelFile: File?, fallbackFileName: String): List<String> {
+        if (modelFile != null) {
+            val sidecar = File(modelFile.parent, "${modelFile.nameWithoutExtension}.txt")
+            if (sidecar.exists()) return sidecar.bufferedReader().readLines()
+        }
+        return context.assets.open(fallbackFileName).bufferedReader().readLines()
+    }
 
     /**
      * Scale [bitmap] to [width]×[height] and pack RGB pixels into a direct [ByteBuffer].

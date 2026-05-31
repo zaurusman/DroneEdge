@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 internal fun canArm(sessionState: SessionState, recordingState: RecordingState): Boolean =
     sessionState == SessionState.RUNNING && recordingState == RecordingState.IDLE
@@ -62,6 +63,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── Detector mode ─────────────────────────────────────────────────────────
     private val _detectorMode = MutableStateFlow(DetectorMode.FAKE)
     val detectorMode: StateFlow<DetectorMode> = _detectorMode.asStateFlow()
+
+    // ── Active external model file (null = bundled asset) ─────────────────────
+    private val _activeModelFile = MutableStateFlow<File?>(null)
+    val activeModelFile: StateFlow<File?> = _activeModelFile.asStateFlow()
 
     // ── Error message (null = no error) ───────────────────────────────────────
     private val _error = MutableStateFlow<String?>(null)
@@ -173,7 +178,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Detector selection (only while IDLE) ──────────────────────────────────
 
-    fun setDetectorMode(mode: DetectorMode, context: android.content.Context? = null) {
+    fun setDetectorMode(mode: DetectorMode, context: android.content.Context? = null, modelFile: File? = null) {
         if (_sessionState.value != SessionState.IDLE) return
         when (mode) {
             DetectorMode.FAKE -> {
@@ -181,16 +186,18 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 tfliteDetector = null
                 detector = FakeDetector()
                 _detectorMode.value = DetectorMode.FAKE
+                _activeModelFile.value = null
                 _error.value = null
             }
             DetectorMode.TFLITE -> {
                 if (context == null) return
                 try {
-                    val tfd = TfliteDetector(context.applicationContext)
+                    val tfd = TfliteDetector(context.applicationContext, modelFile = modelFile)
                     tfliteDetector?.close()
                     tfliteDetector = tfd
                     detector = tfd
                     _detectorMode.value = DetectorMode.TFLITE
+                    _activeModelFile.value = modelFile
                     _error.value = null
                 } catch (e: Exception) {
                     _error.value = "TFLite load failed: ${e.message}"

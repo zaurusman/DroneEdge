@@ -8,6 +8,12 @@ The app should eventually receive a live video stream from DJI Avata / Avata 2 g
 
 For early development, do not implement DJI ingestion yet. Development starts on a Mac using emulator-friendly video sources.
 
+## Build & Deploy
+
+- Build only: `./gradlew assembleDebug`
+- Build + install to connected device/emulator: `./gradlew installDebug`
+- Run unit tests: `./gradlew test`
+
 ## Current Hardware Target
 
 - Development machine: macOS
@@ -32,16 +38,21 @@ Do not hardcode the app around DJI ingestion, USB, or a specific camera API.
 
 ## Build Order
 
-Implement the app in this order:
+Phases completed: 1–4. Remaining:
 
-1. Fake video source with fake detections
-2. Local MP4 replay source
-3. Real TensorFlow Lite detector
-4. Session recording and metadata
 5. USB/UVC source
 6. DJI goggles source
 
 Do not skip directly to DJI integration.
+
+## Package Map
+
+- `video/`          — VideoSource interface + FakeVideoSource, FileReplayVideoSource
+- `detection/`      — Detector interface + FakeDetector, TfliteDetector, SsdOutputParser
+- `recording/`      — SessionRecorder interface + VideoSessionRecorder, YuvConversion
+- `ui/live/`        — LiveScreen, LiveViewModel, session/recording state enums
+- `ui/recordings/`  — RecordingsScreen (MediaStore query + ExoPlayer playback)
+- `ui/theme/`       — DroneEdgeTheme
 
 ## Technology Choices
 
@@ -104,7 +115,7 @@ Default branch: main
 
 Every feature must follow this cycle — no exceptions:
 
-1. **Branch** — create `feature/<short-name>` from the latest `main` before touching code.
+1. **Branch** — create `feature/<short-name>` (new work) or `fix/<short-name>` (bug fix) from the latest `main` before touching code.
 2. **Implement** — make the smallest useful step; keep commits atomic and well-described.
 3. **Test** — write unit or integration tests for the new behaviour; run them with Gradle before merging.
 4. **Build gate** — run `./gradlew assembleDebug` (and `./gradlew test` if unit tests exist); fix all errors.
@@ -127,3 +138,10 @@ Before making large changes:
 7. Summarize what changed and what remains.
 
 When uncertain, prefer creating interfaces and placeholders instead of guessing irreversible implementation details.
+
+## Android Gotchas
+
+- `MediaStore.Files` rejects `Movies/` as `RELATIVE_PATH` on API 29+; write non-video files (JSON, etc.) to `context.getExternalFilesDir()` instead.
+- `MediaMetadataRetriever.getFrameAtTime()` on API 27+ already applies the video's rotation metadata — do not apply an additional rotation or frames will be double-rotated.
+- MediaCodec `getInputBuffer()` with `COLOR_FormatYUV420Flexible` expects **I420 planar** (Y plane, then full U plane, then full V plane), not NV12 (interleaved UV). Wrong format causes green/magenta colour corruption.
+- `FileReplayVideoSource` uses `MediaMetadataRetriever` (≈6 fps). Use wall-clock elapsed time for `videoTimeMs` so source content advances at 1× speed; a fixed `intervalMs` increment causes slow-motion recordings.

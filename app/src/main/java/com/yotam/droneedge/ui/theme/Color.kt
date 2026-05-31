@@ -2,10 +2,13 @@ package com.yotam.droneedge.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+val FieldBackground       = Color(0xFF0A0A0A)
+val FieldSurface          = Color(0xFF111111)
+val FieldSurfaceElevated  = Color(0xFF161616)
+val FieldBorder           = Color(0xFF1F2937)
+val FieldAccent           = Color(0xFFF97316)
+val FieldTextPrimary      = Color(0xFFE5E7EB)
+val FieldTextSecondary    = Color(0xFF9CA3AF)
+val FieldTextMuted        = Color(0xFF6B7280)
+val FieldRecRed           = Color(0xFFDC2626)
+val FieldRecRedLight      = Color(0xFFF87171)
