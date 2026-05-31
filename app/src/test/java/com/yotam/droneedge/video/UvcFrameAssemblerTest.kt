@@ -79,4 +79,16 @@ class UvcFrameAssemblerTest {
         assertNotNull(result)
         assertArrayEquals(fresh, result)
     }
+
+    @Test fun `two consecutive complete frames both return correctly`() {
+        // Frame 0 (fid=0)
+        assertNull(assembler.feed(packet(fid = 0, eof = false, payload = byteArrayOf(0x01)), 3))
+        val frame0 = assembler.feed(packet(fid = 0, eof = true, payload = byteArrayOf(0x02)), 3)
+        assertArrayEquals(byteArrayOf(0x01, 0x02), frame0)
+
+        // Frame 1 (fid=1) — FID toggles but buffer was already flushed by EOF
+        assertNull(assembler.feed(packet(fid = 1, eof = false, payload = byteArrayOf(0x03)), 3))
+        val frame1 = assembler.feed(packet(fid = 1, eof = true, payload = byteArrayOf(0x04)), 3)
+        assertArrayEquals(byteArrayOf(0x03, 0x04), frame1)
+    }
 }

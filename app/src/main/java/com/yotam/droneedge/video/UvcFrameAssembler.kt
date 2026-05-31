@@ -15,6 +15,7 @@ class UvcFrameAssembler {
      */
     fun feed(packet: ByteArray, length: Int): ByteArray? {
         if (length < 2) return null
+        if (length > packet.size) return null  // guard against caller passing length > array size
         val headerLen = packet[0].toInt() and 0xFF
         if (headerLen < 2 || headerLen > length) return null
 
