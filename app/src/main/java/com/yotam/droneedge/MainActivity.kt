@@ -19,8 +19,9 @@ import com.yotam.droneedge.ui.live.ModelSelectionScreen
 import com.yotam.droneedge.ui.recordings.RecordingsScreen
 import com.yotam.droneedge.ui.theme.DroneEdgeTheme
 
-private const val PREFS_NAME     = "droneedge_prefs"
-private const val KEY_DETECTOR   = "detector_mode"
+private const val PREFS_NAME      = "droneedge_prefs"
+private const val KEY_DETECTOR    = "detector_mode"
+private const val KEY_MODEL_FILE  = "model_file_path"
 
 class MainActivity : ComponentActivity() {
 
@@ -37,11 +38,12 @@ class MainActivity : ComponentActivity() {
 
                 when {
                     showModelSelection -> ModelSelectionScreen(
-                        initialMode        = loadDetectorMode(),
-                        isTfliteAvailable  = isTfliteAvailable(),
-                        onConfirm          = { mode ->
-                            vm.setDetectorMode(mode, this@MainActivity)
+                        initialMode     = loadDetectorMode(),
+                        initialFilePath = loadModelFilePath(),
+                        onConfirm       = { mode, file ->
+                            vm.setDetectorMode(mode, this@MainActivity, file)
                             saveDetectorMode(mode)
+                            saveModelFilePath(file?.absolutePath)
                             showModelSelection = false
                         },
                     )
@@ -76,7 +78,15 @@ class MainActivity : ComponentActivity() {
             .apply()
     }
 
-    private fun isTfliteAvailable(): Boolean = runCatching {
-        assets.open("detect.tflite").close()
-    }.isSuccess
+    private fun loadModelFilePath(): String? =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_MODEL_FILE, null)
+
+    private fun saveModelFilePath(path: String?) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_MODEL_FILE, path)
+            .apply()
+    }
+
 }

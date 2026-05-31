@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,23 +91,23 @@ fun LiveScreen(
     vm:        LiveViewModel = viewModel(),
     onGallery: () -> Unit    = {},
 ) {
-    val sessionState   by vm.sessionState.collectAsStateWithLifecycle()
-    val detections     by vm.detections.collectAsStateWithLifecycle()
-    val previewFps     by vm.previewFps.collectAsStateWithLifecycle()
-    val inferenceFps   by vm.inferenceFps.collectAsStateWithLifecycle()
-    val videoUri       by vm.videoUri.collectAsStateWithLifecycle()
-    val detectorMode   by vm.detectorMode.collectAsStateWithLifecycle()
-    val error          by vm.error.collectAsStateWithLifecycle()
-    val recordingState by vm.recordingState.collectAsStateWithLifecycle()
-    val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
-    val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
-    val cameraFacing   by vm.cameraFacing.collectAsStateWithLifecycle()
+    val sessionState    by vm.sessionState.collectAsStateWithLifecycle()
+    val detections      by vm.detections.collectAsStateWithLifecycle()
+    val previewFps      by vm.previewFps.collectAsStateWithLifecycle()
+    val inferenceFps    by vm.inferenceFps.collectAsStateWithLifecycle()
+    val videoUri        by vm.videoUri.collectAsStateWithLifecycle()
+    val detectorMode    by vm.detectorMode.collectAsStateWithLifecycle()
+    val activeModelFile by vm.activeModelFile.collectAsStateWithLifecycle()
+    val error           by vm.error.collectAsStateWithLifecycle()
+    val recordingState  by vm.recordingState.collectAsStateWithLifecycle()
+    val lastRecording   by vm.lastRecording.collectAsStateWithLifecycle()
+    val usbDevice       by vm.usbDevice.collectAsStateWithLifecycle()
+    val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
 
     val context        = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
 
     var showSourceSheet by remember { mutableStateOf(false) }
-    var showModelSheet  by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -168,6 +169,8 @@ fun LiveScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    val hudColor = if (sessionState == SessionState.RUNNING) FieldAccent.copy(alpha = 0.75f) else FieldTextMuted.copy(alpha = 0.8f)
+
     // Derived labels
     val activeSourceChoice: SourceChoice? = when {
         usbDevice    != null -> SourceChoice.USB
@@ -181,10 +184,9 @@ fun LiveScreen(
         videoUri     != null -> "File"
         else                 -> "No Source"
     }
-    val modelLabel = when (detectorMode) {
-        DetectorMode.FAKE   -> "Fake"
-        DetectorMode.TFLITE -> "TFLite"
-    }
+    val modelLabel = activeModelFile?.nameWithoutExtension
+        ?: ModelRegistry.all.find { it.mode == detectorMode }?.shortLabel
+        ?: detectorMode.name
 
     Box(modifier = Modifier.fillMaxSize()) {
 
@@ -216,7 +218,7 @@ fun LiveScreen(
         ) {
             Text(
                 text          = "STATUS",
-                color         = FieldTextMuted.copy(alpha = 0.8f),
+                color         = hudColor,
                 fontSize      = 9.sp,
                 letterSpacing = 1.sp,
             )
@@ -230,15 +232,14 @@ fun LiveScreen(
                 fontWeight = FontWeight.Bold,
                 fontSize   = 12.sp,
             )
-            if (sessionState == SessionState.RUNNING) {
-                Text(
-                    text     = "$sourceLabel · $modelLabel",
-                    color    = FieldTextMuted.copy(alpha = 0.8f),
-                    fontSize = 9.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text     = if (sessionState == SessionState.RUNNING) "$sourceLabel · $modelLabel"
+                           else modelLabel,
+                color    = hudColor,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
         // ── HUD top-right: FPS ────────────────────────────────────────────────
@@ -252,13 +253,13 @@ fun LiveScreen(
         ) {
             Text(
                 text          = "FPS",
-                color         = FieldTextMuted.copy(alpha = 0.8f),
+                color         = hudColor,
                 fontSize      = 9.sp,
                 letterSpacing = 1.sp,
             )
             Text(
                 text  = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
-                color = FieldTextSecondary.copy(alpha = if (sessionState == SessionState.RUNNING) 0.85f else 0.5f),
+                color = hudColor,
                 fontSize = 11.sp,
             )
         }
@@ -279,6 +280,10 @@ fun LiveScreen(
 
         // ── Recording saved snackbar ──────────────────────────────────────────
         if (lastRecording != null) {
+            LaunchedEffect(lastRecording) {
+                delay(3_000)
+                vm.clearLastRecording()
+            }
             Snackbar(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -297,9 +302,7 @@ fun LiveScreen(
             sessionState   = sessionState,
             recordingState = recordingState,
             sourceLabel    = sourceLabel,
-            modelLabel     = modelLabel,
             onSourceClick  = { showSourceSheet = true },
-            onModelClick   = { showModelSheet  = true },
             onGallery      = onGallery,
             onStart        = { vm.start() },
             onStop         = { vm.stop() },
@@ -352,19 +355,6 @@ fun LiveScreen(
             )
         }
 
-        if (showModelSheet) {
-            ModelSheet(
-                currentMode       = detectorMode,
-                isTfliteAvailable = runCatching {
-                    context.assets.open("detect.tflite").close(); true
-                }.getOrDefault(false),
-                onDismiss = { showModelSheet = false },
-                onSelect  = { mode ->
-                    showModelSheet = false
-                    vm.setDetectorMode(mode, context)
-                },
-            )
-        }
     }
 }
 
@@ -376,9 +366,7 @@ private fun BottomBar(
     sessionState:   SessionState,
     recordingState: RecordingState,
     sourceLabel:    String,
-    modelLabel:     String,
     onSourceClick:  () -> Unit,
-    onModelClick:   () -> Unit,
     onGallery:      () -> Unit,
     onStart:        () -> Unit,
     onStop:         () -> Unit,
@@ -399,14 +387,6 @@ private fun BottomBar(
                 ),
                 border = androidx.compose.foundation.BorderStroke(1.dp, FieldAccent),
             ) { Text("$sourceLabel ▾", fontSize = 12.sp) }
-
-            OutlinedButton(
-                onClick = onModelClick,
-                colors  = ButtonDefaults.outlinedButtonColors(
-                    contentColor = FieldTextSecondary,
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
-            ) { Text("$modelLabel ▾", fontSize = 12.sp) }
 
             OutlinedButton(
                 onClick = onGallery,
