@@ -90,8 +90,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun useFileSource(uri: Uri, context: android.content.Context) {
         if (_sessionState.value != SessionState.IDLE) return
-        videoSource = FileReplayVideoSource(uri, context.applicationContext)
-        _videoUri.value = uri
+        videoSource      = FileReplayVideoSource(uri, context.applicationContext)
+        _videoUri.value  = uri
+        _usbDevice.value = null
     }
 
     fun useFakeSource() {
