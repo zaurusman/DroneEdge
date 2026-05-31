@@ -84,7 +84,6 @@ fun LiveScreen(
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
     val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
-    val latestFrame    by vm.latestFrame.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
@@ -164,7 +163,7 @@ fun LiveScreen(
             )
         } else if (cameraFacing != null) {
             CameraFrameDisplay(
-                frame    = latestFrame,
+                frames   = vm.latestFrame,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -540,9 +539,10 @@ private fun DetectionOverlay(
 
 @Composable
 private fun CameraFrameDisplay(
-    frame: VideoFrame?,
+    frames: kotlinx.coroutines.flow.StateFlow<VideoFrame?>,
     modifier: Modifier = Modifier,
 ) {
+    val frame by frames.collectAsStateWithLifecycle()
     val bmp = frame?.bitmap
     if (bmp != null && !bmp.isRecycled) {
         Canvas(modifier = modifier) {
