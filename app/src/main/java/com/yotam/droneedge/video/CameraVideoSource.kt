@@ -15,18 +15,20 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+// LifecycleOwner must be current at construction time.
+// Re-instantiate (via useCameraSource) after configuration changes.
 class CameraVideoSource(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     val facing: Int = CameraSelector.LENS_FACING_BACK,
 ) : VideoSource {
 
-    override var width: Int = 1280
+    @Volatile override var width: Int = 1280
         private set
-    override var height: Int = 720
+    @Volatile override var height: Int = 720
         private set
 
-    private var frameIndex = 0L
+    @Volatile private var frameIndex = 0L
 
     override fun start() {
         frameIndex = 0L
@@ -55,19 +57,24 @@ class CameraVideoSource(
             .build()
             .also { ia ->
                 ia.setAnalyzer(executor) { proxy ->
-                    val bmp = proxy.toBitmap()
-                    width  = bmp.width
-                    height = bmp.height
-                    trySend(
-                        VideoFrame(
-                            index       = frameIndex++,
-                            timestampMs = System.currentTimeMillis(),
-                            width       = bmp.width,
-                            height      = bmp.height,
-                            bitmap      = bmp,
+                    try {
+                        val bmp = proxy.toBitmap()
+                        val w = bmp.width
+                        val h = bmp.height
+                        width = w
+                        height = h
+                        trySend(
+                            VideoFrame(
+                                index       = frameIndex++,
+                                timestampMs = System.currentTimeMillis(),
+                                width       = w,
+                                height      = h,
+                                bitmap      = bmp,
+                            )
                         )
-                    )
-                    proxy.close()
+                    } finally {
+                        proxy.close()
+                    }
                 }
             }
 
