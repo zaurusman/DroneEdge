@@ -50,6 +50,8 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -544,7 +546,13 @@ private fun CameraFrameDisplay(
     val bmp = frame?.bitmap
     if (bmp != null && !bmp.isRecycled) {
         Canvas(modifier = modifier) {
-            drawImage(bmp.asImageBitmap())
+            drawImage(
+                image     = bmp.asImageBitmap(),
+                srcOffset = IntOffset.Zero,
+                srcSize   = IntSize(bmp.width, bmp.height),
+                dstOffset = IntOffset.Zero,
+                dstSize   = IntSize(size.width.toInt(), size.height.toInt()),
+            )
         }
     } else {
         Box(modifier = modifier.background(Color(0xFF0D1117)))
