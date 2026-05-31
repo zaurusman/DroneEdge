@@ -90,8 +90,8 @@ class CameraVideoSource(
         awaitClose {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 provider.unbind(analysis)
+                executor.shutdown()
             }
-            executor.shutdown()
         }
     }
 }
