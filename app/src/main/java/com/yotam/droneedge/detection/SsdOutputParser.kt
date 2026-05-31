@@ -9,7 +9,12 @@ package com.yotam.droneedge.detection
  *  2 — scores      [1][maxDetections]     confidence in [0, 1]
  *  3 — count       [1]                   number of valid detections
  */
-class SsdOutputParser(private val maxDetections: Int = 10) : DetectionOutputParser {
+// labelOffset=1 is the standard convention for TF Hub SSD models: the labelmap reserves
+// index 0 for background ("???"), so the model's 0-based class output must be shifted by 1.
+class SsdOutputParser(
+    private val maxDetections: Int = 10,
+    private val labelOffset: Int = 1,
+) : DetectionOutputParser {
 
     override val numOutputs = 4
 
@@ -36,7 +41,7 @@ class SsdOutputParser(private val maxDetections: Int = 10) : DetectionOutputPars
             val score = scores[i]
             if (score < confidenceThreshold) return@mapNotNull null
 
-            val classIdx = classes[i].toInt().coerceAtLeast(0)
+            val classIdx = (classes[i].toInt() + labelOffset).coerceAtLeast(0)
             val label = labels.getOrElse(classIdx) { "class $classIdx" }
                 .takeIf { it != "???" } ?: return@mapNotNull null  // skip placeholder entries
 

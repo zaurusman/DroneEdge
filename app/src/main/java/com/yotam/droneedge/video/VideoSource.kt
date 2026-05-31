@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.Flow
 interface VideoSource {
     /** Cold flow that emits frames while the source is running. */
     val frames: Flow<VideoFrame>
+    val width: Int
+    val height: Int
 
     /** Prepare and start emitting frames. */
     fun start()

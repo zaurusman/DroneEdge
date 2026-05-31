@@ -49,14 +49,19 @@ import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
 
 @Composable
-fun LiveScreen(vm: LiveViewModel = viewModel()) {
-    val sessionState  by vm.sessionState.collectAsStateWithLifecycle()
-    val detections    by vm.detections.collectAsStateWithLifecycle()
-    val previewFps    by vm.previewFps.collectAsStateWithLifecycle()
-    val inferenceFps  by vm.inferenceFps.collectAsStateWithLifecycle()
-    val videoUri      by vm.videoUri.collectAsStateWithLifecycle()
-    val detectorMode  by vm.detectorMode.collectAsStateWithLifecycle()
-    val error         by vm.error.collectAsStateWithLifecycle()
+fun LiveScreen(
+    vm: LiveViewModel = viewModel(),
+    onRecordings: () -> Unit = {},
+) {
+    val sessionState   by vm.sessionState.collectAsStateWithLifecycle()
+    val detections     by vm.detections.collectAsStateWithLifecycle()
+    val previewFps     by vm.previewFps.collectAsStateWithLifecycle()
+    val inferenceFps   by vm.inferenceFps.collectAsStateWithLifecycle()
+    val videoUri       by vm.videoUri.collectAsStateWithLifecycle()
+    val detectorMode   by vm.detectorMode.collectAsStateWithLifecycle()
+    val error          by vm.error.collectAsStateWithLifecycle()
+    val recordingState by vm.recordingState.collectAsStateWithLifecycle()
+    val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -145,6 +150,20 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
             }
         }
 
+        // ── Recording saved snackbar ──────────────────────────────────────────
+        if (lastRecording != null) {
+            Snackbar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp, start = 16.dp, end = 16.dp),
+                action = {
+                    TextButton(onClick = { vm.clearLastRecording() }) { Text("Dismiss") }
+                },
+            ) {
+                Text("Saved to Movies/DroneEdge/")
+            }
+        }
+
         // ── Bottom controls ───────────────────────────────────────────────────
         Column(
             modifier            = Modifier
@@ -189,6 +208,11 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
+                // Recordings browser (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    OutlinedButton(onClick = onRecordings) { Text("Recordings") }
+                }
+
                 // File picker / clear button (only while idle)
                 if (sessionState == SessionState.IDLE) {
                     if (videoUri == null) {
@@ -204,6 +228,31 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
                         ) {
                             Text("Clear Video")
                         }
+                    }
+                }
+
+                // Recording indicator (only while running)
+                if (sessionState == SessionState.RUNNING) {
+                    when (recordingState) {
+                        // Shouldn't normally appear (auto-armed on start) but allows re-arm if
+                        // the user manually stopped recording mid-session.
+                        RecordingState.IDLE -> OutlinedButton(
+                            onClick = { vm.armRecording() },
+                        ) { Text("REC") }
+
+                        RecordingState.ARMED -> Button(
+                            onClick  = { vm.disarmRecording() },
+                            enabled  = false,
+                            colors   = ButtonDefaults.buttonColors(
+                                disabledContainerColor = Color(0xFFD32F2F),
+                                disabledContentColor   = Color.White,
+                            ),
+                        ) { Text("● REC") }
+
+                        RecordingState.FINALIZING -> OutlinedButton(
+                            onClick  = {},
+                            enabled  = false,
+                        ) { Text("Saving…") }
                     }
                 }
 

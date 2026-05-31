@@ -74,7 +74,7 @@ class SsdOutputParserTest {
     fun `parse maps label by class index`() {
         val outputs = makeOutputs(
             boxRows  = listOf(floatArrayOf(0f, 0f, 0.5f, 0.5f)),
-            classIds = listOf(2f),   // "car"
+            classIds = listOf(1f),   // model output 1 + offset 1 = index 2 → "car"
             scores   = listOf(0.8f),
         )
         val det = parser.parse(outputs, labels, 0.5f).first()
@@ -153,11 +153,11 @@ class SsdOutputParserTest {
     fun `parse falls back to class index label when out of range`() {
         val outputs = makeOutputs(
             boxRows  = listOf(floatArrayOf(0f, 0f, 1f, 1f)),
-            classIds = listOf(99f),   // no label at index 99
+            classIds = listOf(99f),   // model output 99 + offset 1 = index 100 → out of range
             scores   = listOf(0.9f),
         )
         val det = parser.parse(outputs, labels, 0.5f).first()
-        assertEquals("class 99", det.label)
+        assertEquals("class 100", det.label)
     }
 
     @Test
@@ -165,7 +165,7 @@ class SsdOutputParserTest {
         val labelsWithPlaceholder = listOf("background", "???", "car")
         val outputs = makeOutputs(
             boxRows  = listOf(floatArrayOf(0f, 0f, 1f, 1f)),
-            classIds = listOf(1f),   // "???"
+            classIds = listOf(0f),   // model output 0 + offset 1 = index 1 → "???"
             scores   = listOf(0.9f),
         )
         val result = parser.parse(outputs, labelsWithPlaceholder, 0.5f)
