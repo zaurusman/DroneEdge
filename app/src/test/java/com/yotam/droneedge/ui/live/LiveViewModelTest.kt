@@ -1,6 +1,7 @@
 package com.yotam.droneedge.ui.live
 
 import android.app.Application
+import com.yotam.droneedge.recording.FakeSessionRecorder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -28,7 +29,11 @@ class LiveViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        vm = LiveViewModel(Application())
+        vm = LiveViewModel(Application()).also {
+            // start() auto-arms recording; inject a no-op recorder so JVM tests don't
+            // try to open a real MediaStore file.
+            it.recorderFactory = { FakeSessionRecorder() }
+        }
     }
 
     @After

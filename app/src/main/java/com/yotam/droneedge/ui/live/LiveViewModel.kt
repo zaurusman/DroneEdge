@@ -159,6 +159,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         lastInferenceMs = 0L
         videoSource.start()
 
+        armRecording()
+
         pipelineJob = viewModelScope.launch {
             // Latest frame shared between the two coroutines below.
             // StateFlow is conflated — if inference is slow, it naturally picks up

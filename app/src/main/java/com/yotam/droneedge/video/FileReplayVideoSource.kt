@@ -39,12 +39,17 @@ class FileReplayVideoSource(
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
-            videoWidth  = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                ?.toIntOrNull() ?: 1280
-            videoHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-                ?.toIntOrNull() ?: 720
-            durationMs  = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                 ?.toLongOrNull() ?: 0L
+            // Use the first decoded frame's actual pixel dimensions instead of metadata —
+            // getFrameAtTime() can return a downscaled bitmap on some decoders, and encoding
+            // at the metadata resolution would upscale (zoom) the content.
+            val sampleFrame = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            val metaW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1280
+            val metaH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 720
+            videoWidth  = sampleFrame?.width  ?: metaW
+            videoHeight = sampleFrame?.height ?: metaH
+            sampleFrame?.recycle()
         } finally {
             retriever.release()
         }
@@ -72,7 +77,7 @@ class FileReplayVideoSource(
                 emit(
                     VideoFrame(
                         index       = frameIndex++,
-                        timestampMs = videoTimeMs,
+                        timestampMs = System.currentTimeMillis(), // wall-clock for correct PTS
                         width       = videoWidth,
                         height      = videoHeight,
                         bitmap      = bitmap,

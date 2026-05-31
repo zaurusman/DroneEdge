@@ -49,7 +49,10 @@ import com.yotam.droneedge.detection.BoundingBox
 import com.yotam.droneedge.detection.Detection
 
 @Composable
-fun LiveScreen(vm: LiveViewModel = viewModel()) {
+fun LiveScreen(
+    vm: LiveViewModel = viewModel(),
+    onRecordings: () -> Unit = {},
+) {
     val sessionState   by vm.sessionState.collectAsStateWithLifecycle()
     val detections     by vm.detections.collectAsStateWithLifecycle()
     val previewFps     by vm.previewFps.collectAsStateWithLifecycle()
@@ -205,6 +208,11 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
+                // Recordings browser (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    OutlinedButton(onClick = onRecordings) { Text("Recordings") }
+                }
+
                 // File picker / clear button (only while idle)
                 if (sessionState == SessionState.IDLE) {
                     if (videoUri == null) {
@@ -223,18 +231,21 @@ fun LiveScreen(vm: LiveViewModel = viewModel()) {
                     }
                 }
 
-                // REC toggle (only while running)
+                // Recording indicator (only while running)
                 if (sessionState == SessionState.RUNNING) {
                     when (recordingState) {
+                        // Shouldn't normally appear (auto-armed on start) but allows re-arm if
+                        // the user manually stopped recording mid-session.
                         RecordingState.IDLE -> OutlinedButton(
                             onClick = { vm.armRecording() },
                         ) { Text("REC") }
 
                         RecordingState.ARMED -> Button(
-                            onClick = { vm.disarmRecording() },
-                            colors  = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFFD32F2F),
-                                contentColor   = Color.White,
+                            onClick  = { vm.disarmRecording() },
+                            enabled  = false,
+                            colors   = ButtonDefaults.buttonColors(
+                                disabledContainerColor = Color(0xFFD32F2F),
+                                disabledContentColor   = Color.White,
                             ),
                         ) { Text("● REC") }
 

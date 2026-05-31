@@ -24,7 +24,6 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
-import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -137,11 +136,11 @@ class VideoSessionRecorder : SessionRecorder {
                     Bitmap.createScaledBitmap(annotated, encodedWidth, encodedHeight, true)
                 }
 
-                val yuv = bitmapToNv12(scaled)
+                // I420 planar — matches COLOR_FormatYUV420Flexible layout used by getInputBuffer()
+                val yuv = bitmapToI420(scaled)
                 if (scaled !== annotated) scaled.recycle()
                 annotated.recycle()
 
-                // Feed NV12 bytes to encoder
                 val inputIdx = enc.dequeueInputBuffer(10_000L)
                 if (inputIdx >= 0) {
                     val buf = enc.getInputBuffer(inputIdx)!!
@@ -264,30 +263,13 @@ class VideoSessionRecorder : SessionRecorder {
     }
 
     private fun openJsonWriter(context: Context): BufferedWriter {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val cv = ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, "detections.json")
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "application/json")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, "Movies/DroneEdge/$sessionName/")
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
-            }
-            val uri = context.contentResolver.insert(
-                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv
-            ) ?: error("MediaStore insert failed for JSON")
-            jsonRowUri = uri
-            BufferedWriter(OutputStreamWriter(
-                context.contentResolver.openOutputStream(uri)
-                    ?: error("Cannot open output stream for $uri")
-            ))
-        } else {
-            val dir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                "DroneEdge/$sessionName"
-            ).also { it.mkdirs() }
-            val file = File(dir, "detections.json")
-            jsonRowUri = Uri.fromFile(file)
-            BufferedWriter(FileWriter(file))
-        }
+        // MediaStore.Files rejects Movies/ on API 29+; use app external files dir instead —
+        // accessible via adb, no permission needed at any API level.
+        val dir = File(context.getExternalFilesDir(null), "recordings/$sessionName")
+            .also { it.mkdirs() }
+        val file = File(dir, "detections.json")
+        jsonRowUri = Uri.fromFile(file)
+        return BufferedWriter(FileWriter(file))
     }
 
     private fun finalizeMediaStore() {
@@ -300,13 +282,7 @@ class VideoSessionRecorder : SessionRecorder {
                     null, null
                 )
             }
-            jsonRowUri?.let { uri ->
-                ctx.contentResolver.update(
-                    uri,
-                    ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) },
-                    null, null
-                )
-            }
+            // JSON is written to getExternalFilesDir — no MediaStore row to finalize.
         }
     }
 }
