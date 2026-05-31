@@ -1,16 +1,21 @@
 package com.yotam.droneedge.ui.live
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -73,8 +78,25 @@ fun LiveScreen(
     val recordingState by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording  by vm.lastRecording.collectAsStateWithLifecycle()
     val usbDevice      by vm.usbDevice.collectAsStateWithLifecycle()
+    val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+    }
+
+    // Re-create CameraVideoSource after configuration changes (rotation) so the stored
+    // LifecycleOwner is always current. Only re-creates when camera is already selected and IDLE.
+    LaunchedEffect(lifecycleOwner) {
+        val facing = vm.cameraFacing.value
+        if (facing != null && vm.sessionState.value == SessionState.IDLE) {
+            vm.useCameraSource(facing, context, lifecycleOwner)
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -181,6 +203,9 @@ fun LiveScreen(
                     modifier = Modifier
                         .background(Color(0x80000000))
                         .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+                cameraFacing != null -> HudText(
+                    if (cameraFacing == CameraSelector.LENS_FACING_BACK) "CAM: back" else "CAM: front"
                 )
                 videoUri != null -> Text(
                     text     = "FILE: ${videoUri!!.lastPathSegment ?: "video"}",
@@ -329,6 +354,31 @@ fun LiveScreen(
                             ),
                         ) {
                             Text("Clear USB")
+                        }
+                    }
+                }
+
+                // Camera connect / clear button (only while idle)
+                if (sessionState == SessionState.IDLE) {
+                    if (cameraFacing == null) {
+                        OutlinedButton(onClick = {
+                            val permission = Manifest.permission.CAMERA
+                            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                                vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
+                            } else {
+                                cameraPermissionLauncher.launch(permission)
+                            }
+                        }) {
+                            Text("Camera")
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { vm.clearCameraSource() },
+                            colors  = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                        ) {
+                            Text("Clear Cam")
                         }
                     }
                 }
