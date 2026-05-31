@@ -6,6 +6,8 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- Declares that this app requires USB host mode hardware -->
     <uses-feature android:name="android.hardware.usb.host" />
 
