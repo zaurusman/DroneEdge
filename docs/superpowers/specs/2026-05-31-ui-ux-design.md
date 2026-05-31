@@ -103,7 +103,7 @@ Opens as a bottom sheet from the Source button (IDLE only).
 Options (in order):
 1. Camera (back) — tappable
 2. USB / UVC — tappable; shows error snackbar if no UVC device found
-3. Video File — opens system file picker
+3. Video File — opens system file picker; if user cancels, source remains unchanged
 4. DJI Goggles — greyed out, "coming soon" label, not tappable
 5. Fake (dev) — always available
 
