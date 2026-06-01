@@ -21,7 +21,7 @@ data class DumlPacket(
     override fun hashCode(): Int {
         var h = src
         h = 31 * h + dst; h = 31 * h + seq
-        h = 31 * h + cmdSet; h = 31 * h + cmdId
+        h = 31 * h + attributes; h = 31 * h + cmdSet; h = 31 * h + cmdId
         return 31 * h + payload.contentHashCode()
     }
 }
