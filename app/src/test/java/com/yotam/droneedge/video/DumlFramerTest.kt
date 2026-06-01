@@ -91,6 +91,14 @@ class DumlFramerTest {
         assertArrayEquals(payload, r.payload)
     }
 
+    @Test fun `buildPacket round-trips seq high-byte through feed`() {
+        val seqValue = 0x1234
+        val p = DumlFramer().buildPacket(0x06, 0x07, seqValue, 0x09, 0x05, byteArrayOf(), needAck = false)
+        val r = framer.feed(p, p.size)
+        assertNotNull(r); r!!
+        assertEquals(seqValue, r.seq)
+    }
+
     @Test fun `two packets in one feed — second buffered and returned on next call`() {
         val p1 = pkt(seq = 1, cmdId = 0x01)
         val p2 = pkt(seq = 2, cmdId = 0x02)
