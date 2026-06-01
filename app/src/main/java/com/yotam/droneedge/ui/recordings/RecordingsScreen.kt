@@ -54,10 +54,12 @@ import java.util.Date
 import java.util.Locale
 
 data class RecordingEntry(
-    val uri:         Uri,
-    val sessionName: String,
-    val durationMs:  Long,
-    val dateMs:      Long,
+    val uri:            Uri,
+    val sessionName:    String,
+    val durationMs:     Long,
+    val dateMs:         Long,
+    val thumbnail:      android.graphics.Bitmap?,
+    val detectionCount: Int,   // -1 if sidecar not found
 )
 
 @Composable
@@ -225,19 +227,35 @@ internal fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
             val relativePath = cursor.getString(pathCol) ?: ""
             val sessionName  = relativePath.trimEnd('/').substringAfterLast('/')
                 .takeIf { it.isNotEmpty() } ?: cursor.getString(nameCol)
+            val id  = cursor.getLong(idCol)
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), id
+            )
             results += RecordingEntry(
-                uri         = ContentUris.withAppendedId(
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                    cursor.getLong(idCol),
-                ),
-                sessionName = sessionName,
-                durationMs  = cursor.getLong(durCol),
-                dateMs      = cursor.getLong(dateCol) * 1000L,
+                uri            = uri,
+                sessionName    = sessionName,
+                durationMs     = cursor.getLong(durCol),
+                dateMs         = cursor.getLong(dateCol) * 1000L,
+                thumbnail      = loadThumbnail(context, uri, id),
+                detectionCount = com.yotam.droneedge.recording.loadDetectionCount(context, sessionName),
             )
         }
     }
     return results
 }
+
+private fun loadThumbnail(context: Context, uri: Uri, id: Long): android.graphics.Bitmap? =
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        runCatching {
+            context.contentResolver.loadThumbnail(uri, android.util.Size(128, 72), null)
+        }.getOrNull()
+    } else {
+        @Suppress("DEPRECATION")
+        MediaStore.Video.Thumbnails.getThumbnail(
+            context.contentResolver, id,
+            MediaStore.Video.Thumbnails.MICRO_KIND, null,
+        )
+    }
 
 internal fun queryRecordingsFileSystem(): List<RecordingEntry> {
     val root = File(
@@ -251,10 +269,12 @@ internal fun queryRecordingsFileSystem(): List<RecordingEntry> {
             val mp4 = File(dir, "annotated.mp4")
             if (!mp4.exists()) return@mapNotNull null
             RecordingEntry(
-                uri         = Uri.fromFile(mp4),
-                sessionName = dir.name,
-                durationMs  = 0L,
-                dateMs      = dir.lastModified(),
+                uri            = Uri.fromFile(mp4),
+                sessionName    = dir.name,
+                durationMs     = 0L,
+                dateMs         = dir.lastModified(),
+                thumbnail      = null,
+                detectionCount = -1,
             )
         }
         ?: emptyList()
