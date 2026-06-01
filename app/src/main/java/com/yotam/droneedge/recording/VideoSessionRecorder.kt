@@ -117,7 +117,10 @@ class VideoSessionRecorder : SessionRecorder {
                 val bmp = frame.bitmap ?: return@withLock
                 val enc = encoder ?: return@withLock
 
-                if (firstTimestampMs < 0L) firstTimestampMs = frame.timestampMs
+                if (firstTimestampMs < 0L) {
+                    firstTimestampMs = frame.timestampMs
+                    jsonWriter?.appendLine("""{"sessionStart":$firstTimestampMs}""")
+                }
 
                 // Annotate a mutable copy
                 val annotated = bmp.copy(Bitmap.Config.ARGB_8888, true)

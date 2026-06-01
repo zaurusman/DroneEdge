@@ -31,12 +31,18 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.layout.height
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
@@ -54,6 +60,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.yotam.droneedge.recording.loadDetectionFractions
 import com.yotam.droneedge.ui.theme.FieldAccent
 import com.yotam.droneedge.ui.theme.FieldBackground
 import com.yotam.droneedge.ui.theme.FieldBorder
@@ -314,6 +321,21 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
     }
     DisposableEffect(entry.uri) { onDispose { exoPlayer.release() } }
 
+    var detectionFractions by remember { mutableStateOf<List<Float>>(emptyList()) }
+    var currentPositionMs  by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(entry.sessionName) {
+        detectionFractions = withContext(Dispatchers.IO) {
+            loadDetectionFractions(context, entry.sessionName, entry.durationMs)
+        }
+    }
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            currentPositionMs = exoPlayer.currentPosition
+            delay(200L)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -344,6 +366,43 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
                 .padding(16.dp)
                 .background(Color(0x80000000))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+        DetectionTimeline(
+            fractions   = detectionFractions,
+            currentFrac = if (entry.durationMs > 0L)
+                (currentPositionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f)
+            else 0f,
+            modifier    = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun DetectionTimeline(
+    fractions:   List<Float>,
+    currentFrac: Float,
+    modifier:    Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        drawRect(color = Color(0xCC000000))
+        fractions.forEach { f ->
+            drawLine(
+                color       = Color(0xFFF97316),
+                start       = Offset(f * w, h * 0.15f),
+                end         = Offset(f * w, h * 0.85f),
+                strokeWidth = 2f,
+            )
+        }
+        drawLine(
+            color       = Color.White,
+            start       = Offset(currentFrac * w, 0f),
+            end         = Offset(currentFrac * w, h),
+            strokeWidth = 2f,
         )
     }
 }
