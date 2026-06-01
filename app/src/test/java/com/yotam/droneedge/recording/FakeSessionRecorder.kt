@@ -1,7 +1,6 @@
 package com.yotam.droneedge.recording
 
 import android.content.Context
-import android.net.Uri
 import com.yotam.droneedge.detection.Detection
 import com.yotam.droneedge.video.VideoFrame
 
@@ -21,8 +20,9 @@ class FakeSessionRecorder : SessionRecorder {
     override suspend fun stop(): RecordingResult {
         stopCalled = true
         return RecordingResult(
-            videoUri = Uri.EMPTY,
-            jsonUri = Uri.EMPTY,
+            videoUri   = null,
+            jsonUri    = null,
+            sessionId  = "session_fake",
             frameCount = framesReceived.size,
             durationMs = 0L,
         )

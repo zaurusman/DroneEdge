@@ -6,8 +6,9 @@ import com.yotam.droneedge.detection.Detection
 import com.yotam.droneedge.video.VideoFrame
 
 data class RecordingResult(
-    val videoUri: Uri,
-    val jsonUri: Uri,
+    val videoUri:   Uri?,
+    val jsonUri:    Uri?,
+    val sessionId:  String,
     val frameCount: Int,
     val durationMs: Long,
 )

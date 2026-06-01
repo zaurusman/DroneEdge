@@ -15,6 +15,8 @@ import com.yotam.droneedge.detection.TfliteDetector
 import com.yotam.droneedge.recording.RecordingResult
 import com.yotam.droneedge.recording.SessionRecorder
 import com.yotam.droneedge.recording.VideoSessionRecorder
+import com.yotam.droneedge.recording.renameSession
+import com.yotam.droneedge.recording.sanitizeSessionName
 import com.yotam.droneedge.video.CameraVideoSource
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
@@ -24,6 +26,7 @@ import com.yotam.droneedge.video.VideoFrame
 import com.yotam.droneedge.video.VideoSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,6 +92,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _lastRecording = MutableStateFlow<RecordingResult?>(null)
     val lastRecording: StateFlow<RecordingResult?> = _lastRecording.asStateFlow()
 
+    // ── Pending rename (awaiting user input before showing snackbar) ──────────
+    private val _pendingRename = MutableStateFlow<RecordingResult?>(null)
+    val pendingRename: StateFlow<RecordingResult?> = _pendingRename.asStateFlow()
+
     // ── Detection results ─────────────────────────────────────────────────────
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
     val detections: StateFlow<List<Detection>> = _detections.asStateFlow()
@@ -107,6 +114,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val previewFrameTimes = ArrayDeque<Long>()
     private val inferenceFrameTimes = ArrayDeque<Long>()
     private var pipelineJob: Job? = null
+
+    // ── Recording elapsed timer ───────────────────────────────────────────────
+    private val _recordingElapsedMs = MutableStateFlow(0L)
+    val recordingElapsedMs: StateFlow<Long> = _recordingElapsedMs.asStateFlow()
+    private var timerJob: Job? = null
 
     // ── Source selection (only while IDLE) ────────────────────────────────────
 
@@ -238,6 +250,13 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (!canArm(_sessionState.value, _recordingState.value)) return
         val rec = recorderFactory()
         recorder = rec
+        _recordingElapsedMs.value = 0L
+        timerJob = viewModelScope.launch {
+            while (true) {
+                delay(1000L)
+                _recordingElapsedMs.value += 1000L
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             rec.start(videoSource.width, videoSource.height, 30, getApplication())
             _recordingState.value = RecordingState.ARMED
@@ -245,18 +264,41 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disarmRecording() {
+        timerJob?.cancel()
+        timerJob = null
         if (!canDisarm(_recordingState.value)) return
         val rec = recorder ?: return
         _recordingState.value = RecordingState.FINALIZING
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { rec.stop() }
-            _lastRecording.value = result
+            _pendingRename.value = result
             _recordingState.value = RecordingState.IDLE
             recorder = null
         }
     }
 
     fun clearLastRecording() { _lastRecording.value = null }
+
+    fun skipNaming(result: RecordingResult) {
+        _pendingRename.value = null
+        _lastRecording.value = result
+    }
+
+    fun finalizeSessionName(result: RecordingResult, name: String) {
+        val sanitized = sanitizeSessionName(name)
+        if (sanitized != null && sanitized != result.sessionId && result.videoUri != null) {
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) {
+                    renameSession(getApplication(), result.videoUri, result.sessionId, sanitized)
+                }
+                _pendingRename.value = null
+                _lastRecording.value = result.copy(sessionId = sanitized)
+            }
+        } else {
+            _pendingRename.value = null
+            _lastRecording.value = result
+        }
+    }
 
     // ── Session control ───────────────────────────────────────────────────────
 
@@ -317,6 +359,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         videoSource.stop()
         pipelineJob?.cancel()
         pipelineJob = null
+        timerJob?.cancel()
+        timerJob = null
+        _recordingElapsedMs.value = 0L
         _detections.value = emptyList()
         _previewFps.value = 0f
         _inferenceFps.value = 0f
@@ -326,6 +371,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        timerJob?.cancel()
         if (canDisarm(_recordingState.value)) disarmRecording()
         videoSource.stop()
         pipelineJob?.cancel()

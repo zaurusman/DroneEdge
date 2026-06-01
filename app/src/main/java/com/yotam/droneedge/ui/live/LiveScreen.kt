@@ -30,10 +30,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -81,6 +83,7 @@ import com.yotam.droneedge.ui.theme.FieldRecRed
 import com.yotam.droneedge.ui.theme.FieldRecRedLight
 import com.yotam.droneedge.ui.theme.FieldSurface
 import com.yotam.droneedge.ui.theme.FieldTextMuted
+import com.yotam.droneedge.ui.theme.FieldTextPrimary
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
 import com.yotam.droneedge.video.VideoFrame
 import com.yotam.droneedge.video.DjiGogglesVideoSource
@@ -101,9 +104,11 @@ fun LiveScreen(
     val detectorMode    by vm.detectorMode.collectAsStateWithLifecycle()
     val activeModelFile by vm.activeModelFile.collectAsStateWithLifecycle()
     val error           by vm.error.collectAsStateWithLifecycle()
-    val recordingState  by vm.recordingState.collectAsStateWithLifecycle()
-    val lastRecording   by vm.lastRecording.collectAsStateWithLifecycle()
-    val usbDevice       by vm.usbDevice.collectAsStateWithLifecycle()
+    val recordingState   by vm.recordingState.collectAsStateWithLifecycle()
+    val lastRecording    by vm.lastRecording.collectAsStateWithLifecycle()
+    val pendingRename    by vm.pendingRename.collectAsStateWithLifecycle()
+    val recordingElapsed by vm.recordingElapsedMs.collectAsStateWithLifecycle()
+    val usbDevice        by vm.usbDevice.collectAsStateWithLifecycle()
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
     val djiDevice       by vm.djiDevice.collectAsStateWithLifecycle()
 
@@ -319,6 +324,7 @@ fun LiveScreen(
             modifier       = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
             sessionState   = sessionState,
             recordingState = recordingState,
+            elapsedMs      = recordingElapsed,
             sourceLabel    = sourceLabel,
             onSourceClick  = { showSourceSheet = true },
             onGallery      = onGallery,
@@ -394,6 +400,14 @@ fun LiveScreen(
             )
         }
 
+        // ── Post-recording naming dialog ──────────────────────────────────────
+        pendingRename?.let { result ->
+            NamingDialog(
+                sessionId = result.sessionId,
+                onConfirm = { name -> vm.finalizeSessionName(result, name) },
+                onSkip    = { vm.skipNaming(result) },
+            )
+        }
     }
 }
 
@@ -404,6 +418,7 @@ private fun BottomBar(
     modifier:       Modifier,
     sessionState:   SessionState,
     recordingState: RecordingState,
+    elapsedMs:      Long,
     sourceLabel:    String,
     onSourceClick:  () -> Unit,
     onGallery:      () -> Unit,
@@ -437,7 +452,7 @@ private fun BottomBar(
         }
 
         if (sessionState == SessionState.RUNNING) {
-            RecButton(recordingState = recordingState, onArmRecording = onArmRecording)
+            RecButton(recordingState = recordingState, elapsedMs = elapsedMs, onArmRecording = onArmRecording)
         }
 
         Spacer(modifier = Modifier.weight(1f))
@@ -467,7 +482,11 @@ private fun BottomBar(
 // ── Breathing REC button ──────────────────────────────────────────────────────
 
 @Composable
-private fun RecButton(recordingState: RecordingState, onArmRecording: () -> Unit) {
+private fun RecButton(
+    recordingState: RecordingState,
+    elapsedMs:      Long,
+    onArmRecording: () -> Unit,
+) {
     val infiniteTransition = rememberInfiniteTransition(label = "rec")
     val dotAlpha by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -486,20 +505,25 @@ private fun RecButton(recordingState: RecordingState, onArmRecording: () -> Unit
             border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
         ) { Text("REC", fontSize = 12.sp) }
 
-        RecordingState.ARMED -> OutlinedButton(
-            onClick = {},
-            colors  = ButtonDefaults.outlinedButtonColors(
-                containerColor = Color(0x331A0000),
-                contentColor   = FieldRecRedLight,
-            ),
-            border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
-        ) {
-            Text(
-                text       = "● REC",
-                fontSize   = 12.sp,
-                color      = FieldRecRedLight.copy(alpha = dotAlpha),
-                fontWeight = FontWeight.SemiBold,
-            )
+        RecordingState.ARMED -> {
+            val timerStr = remember(elapsedMs) {
+                "%d:%02d".format(elapsedMs / 60_000L, (elapsedMs / 1000L) % 60L)
+            }
+            OutlinedButton(
+                onClick = {},
+                colors  = ButtonDefaults.outlinedButtonColors(
+                    containerColor = Color(0x331A0000),
+                    contentColor   = FieldRecRedLight,
+                ),
+                border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
+            ) {
+                Text(
+                    text       = "● REC  $timerStr",
+                    fontSize   = 12.sp,
+                    color      = FieldRecRedLight.copy(alpha = dotAlpha),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
 
         RecordingState.FINALIZING -> OutlinedButton(
@@ -598,4 +622,47 @@ private fun CameraFrameDisplay(
     } else {
         Box(modifier = modifier.background(FieldBackground))
     }
+}
+
+// ── Post-recording naming dialog ──────────────────────────────────────────────
+
+@Composable
+private fun NamingDialog(
+    sessionId: String,
+    onConfirm: (String) -> Unit,
+    onSkip:    () -> Unit,
+) {
+    val defaultName = remember(sessionId) {
+        runCatching {
+            val ts     = sessionId.removePrefix("session_")
+            val parsed = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).parse(ts)
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(parsed!!)
+        }.getOrDefault(sessionId)
+    }
+    var name by remember(sessionId) { mutableStateOf(defaultName) }
+
+    AlertDialog(
+        onDismissRequest = onSkip,
+        title = { Text("Name this recording", color = FieldTextPrimary) },
+        text  = {
+            OutlinedTextField(
+                value         = name,
+                onValueChange = { name = it },
+                label         = { Text("Session name") },
+                singleLine    = true,
+                modifier      = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }) {
+                Text("Save", color = FieldAccent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onSkip) {
+                Text("Skip", color = FieldTextMuted)
+            }
+        },
+        containerColor = FieldSurface,
+    )
 }

@@ -6,30 +6,44 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,32 +61,50 @@ import com.yotam.droneedge.ui.theme.FieldSurface
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 data class RecordingEntry(
-    val uri:         Uri,
-    val sessionName: String,
-    val durationMs:  Long,
-    val dateMs:      Long,
+    val uri:            Uri,
+    val sessionName:    String,
+    val durationMs:     Long,
+    val dateMs:         Long,
+    val thumbnail:      android.graphics.Bitmap?,
+    val detectionCount: Int,   // -1 if sidecar not found
 )
 
 @Composable
 fun RecordingsScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val recordings by produceState<List<RecordingEntry>>(emptyList()) {
-        value = withContext(Dispatchers.IO) { queryRecordings(context) }
-    }
+    val vm           = viewModel<RecordingsViewModel>()
+    val recordings   by vm.recordings.collectAsStateWithLifecycle()
+    val error        by vm.error.collectAsStateWithLifecycle()
     var playingEntry by remember { mutableStateOf<RecordingEntry?>(null) }
+
+    LaunchedEffect(Unit) { vm.reload() }
 
     if (playingEntry != null) {
         RecordingPlayer(entry = playingEntry!!, onBack = { playingEntry = null })
     } else {
-        RecordingList(recordings = recordings, onSelect = { playingEntry = it }, onBack = onBack)
+        RecordingList(
+            recordings = recordings,
+            onSelect   = { playingEntry = it },
+            onRename   = { entry, name -> vm.rename(entry, name) },
+            onDelete   = { entry -> vm.delete(entry) },
+            onBack     = onBack,
+        )
+    }
+
+    error?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { vm.clearError() },
+            title            = { Text("Error", color = FieldTextPrimary) },
+            text             = { Text(msg, color = FieldTextSecondary) },
+            confirmButton    = {
+                TextButton(onClick = { vm.clearError() }) { Text("OK", color = FieldAccent) }
+            },
+        )
     }
 }
 
@@ -82,6 +114,8 @@ fun RecordingsScreen(onBack: () -> Unit) {
 private fun RecordingList(
     recordings: List<RecordingEntry>,
     onSelect:   (RecordingEntry) -> Unit,
+    onRename:   (RecordingEntry, String) -> Unit,
+    onDelete:   (RecordingEntry) -> Unit,
     onBack:     () -> Unit,
 ) {
     Column(
@@ -115,7 +149,12 @@ private fun RecordingList(
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(recordings) { entry ->
-                    RecordingRow(entry = entry, onClick = { onSelect(entry) })
+                    RecordingRow(
+                        entry    = entry,
+                        onClick  = { onSelect(entry) },
+                        onRename = { name -> onRename(entry, name) },
+                        onDelete = { onDelete(entry) },
+                    )
                     HorizontalDivider(color = FieldBorder)
                 }
             }
@@ -123,8 +162,18 @@ private fun RecordingList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecordingRow(entry: RecordingEntry, onClick: () -> Unit) {
+private fun RecordingRow(
+    entry:    RecordingEntry,
+    onClick:  () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var showMenu   by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
+
     val dateStr = remember(entry.dateMs) {
         SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.getDefault()).format(Date(entry.dateMs))
     }
@@ -132,19 +181,121 @@ private fun RecordingRow(entry: RecordingEntry, onClick: () -> Unit) {
         val s = entry.durationMs / 1000
         "%d:%02d".format(s / 60, s % 60)
     }
-    Row(
-        modifier              = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment     = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text(text = entry.sessionName, color = FieldTextPrimary, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-            Text(text = dateStr, color = FieldTextSecondary, fontSize = 11.sp)
+
+    Box {
+        Row(
+            modifier          = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick, onLongClick = { showMenu = true })
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Thumbnail
+            Box(
+                modifier         = Modifier
+                    .size(64.dp, 36.dp)
+                    .background(FieldBorder),
+                contentAlignment = Alignment.Center,
+            ) {
+                val bmp = entry.thumbnail
+                if (bmp != null) {
+                    Image(
+                        bitmap             = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        modifier           = Modifier.fillMaxSize(),
+                        contentScale       = ContentScale.Crop,
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            // Text columns
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text       = entry.sessionName,
+                        color      = FieldTextPrimary,
+                        fontWeight = FontWeight.Medium,
+                        fontSize   = 13.sp,
+                        modifier   = Modifier.weight(1f),
+                    )
+                    Text(text = durationStr, color = FieldTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(text = dateStr, color = FieldTextSecondary, fontSize = 11.sp)
+                    val detStr = if (entry.detectionCount >= 0) "${entry.detectionCount} det." else ""
+                    if (detStr.isNotEmpty()) Text(text = detStr, color = FieldTextMuted, fontSize = 11.sp)
+                }
+            }
         }
-        Text(text = durationStr, color = FieldTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+
+        DropdownMenu(
+            expanded         = showMenu,
+            onDismissRequest = { showMenu = false },
+        ) {
+            DropdownMenuItem(
+                text    = { Text("Rename") },
+                onClick = { showMenu = false; showRename = true },
+            )
+            DropdownMenuItem(
+                text    = { Text("Delete") },
+                onClick = { showMenu = false; showDelete = true },
+            )
+        }
+    }
+
+    if (showRename) {
+        var nameText by remember { mutableStateOf(entry.sessionName) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title            = { Text("Rename session", color = FieldTextPrimary) },
+            text             = {
+                OutlinedTextField(
+                    value         = nameText,
+                    onValueChange = { nameText = it },
+                    label         = { Text("Session name") },
+                    singleLine    = true,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(nameText.trim()); showRename = false }) {
+                    Text("Save", color = FieldAccent)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRename = false }) {
+                    Text("Cancel", color = FieldTextSecondary)
+                }
+            },
+        )
+    }
+
+    if (showDelete) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            title            = { Text("Delete session", color = FieldTextPrimary) },
+            text             = {
+                Text(
+                    "Delete \"${entry.sessionName}\"? This cannot be undone.",
+                    color = FieldTextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); showDelete = false }) {
+                    Text("Delete", color = Color.Red)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDelete = false }) {
+                    Text("Cancel", color = FieldTextSecondary)
+                }
+            },
+        )
     }
 }
 
@@ -199,11 +350,11 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
 
 // ── MediaStore query ──────────────────────────────────────────────────────────
 
-private fun queryRecordings(context: Context): List<RecordingEntry> =
+internal fun queryRecordings(context: Context): List<RecordingEntry> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) queryRecordingsMediaStore(context)
     else queryRecordingsFileSystem()
 
-private fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
+internal fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
     val results    = mutableListOf<RecordingEntry>()
     val projection = arrayOf(
         MediaStore.Video.Media._ID,
@@ -228,21 +379,37 @@ private fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
             val relativePath = cursor.getString(pathCol) ?: ""
             val sessionName  = relativePath.trimEnd('/').substringAfterLast('/')
                 .takeIf { it.isNotEmpty() } ?: cursor.getString(nameCol)
+            val id  = cursor.getLong(idCol)
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), id
+            )
             results += RecordingEntry(
-                uri         = ContentUris.withAppendedId(
-                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                    cursor.getLong(idCol),
-                ),
-                sessionName = sessionName,
-                durationMs  = cursor.getLong(durCol),
-                dateMs      = cursor.getLong(dateCol) * 1000L,
+                uri            = uri,
+                sessionName    = sessionName,
+                durationMs     = cursor.getLong(durCol),
+                dateMs         = cursor.getLong(dateCol) * 1000L,
+                thumbnail      = loadThumbnail(context, uri, id),
+                detectionCount = com.yotam.droneedge.recording.loadDetectionCount(context, sessionName),
             )
         }
     }
     return results
 }
 
-private fun queryRecordingsFileSystem(): List<RecordingEntry> {
+private fun loadThumbnail(context: Context, uri: Uri, id: Long): android.graphics.Bitmap? =
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        runCatching {
+            context.contentResolver.loadThumbnail(uri, android.util.Size(128, 72), null)
+        }.getOrNull()
+    } else {
+        @Suppress("DEPRECATION")
+        MediaStore.Video.Thumbnails.getThumbnail(
+            context.contentResolver, id,
+            MediaStore.Video.Thumbnails.MICRO_KIND, null,
+        )
+    }
+
+internal fun queryRecordingsFileSystem(): List<RecordingEntry> {
     val root = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "DroneEdge"
     )
@@ -254,10 +421,12 @@ private fun queryRecordingsFileSystem(): List<RecordingEntry> {
             val mp4 = File(dir, "annotated.mp4")
             if (!mp4.exists()) return@mapNotNull null
             RecordingEntry(
-                uri         = Uri.fromFile(mp4),
-                sessionName = dir.name,
-                durationMs  = 0L,
-                dateMs      = dir.lastModified(),
+                uri            = Uri.fromFile(mp4),
+                sessionName    = dir.name,
+                durationMs     = 0L,
+                dateMs         = dir.lastModified(),
+                thumbnail      = null,
+                detectionCount = -1,
             )
         }
         ?: emptyList()
