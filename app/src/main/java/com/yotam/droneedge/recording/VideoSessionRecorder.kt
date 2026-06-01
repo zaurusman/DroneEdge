@@ -57,7 +57,6 @@ class VideoSessionRecorder : SessionRecorder {
     private val boxPaint = Paint().apply {
         color = 0xFFF97316.toInt()   // matches FieldAccent orange used by live overlay
         style = Paint.Style.STROKE
-        strokeWidth = 4f
         isAntiAlias = false
     }
     private val labelBgPaint = Paint().apply {
@@ -66,8 +65,9 @@ class VideoSessionRecorder : SessionRecorder {
     }
     private val labelPaint = Paint().apply {
         color = Color.WHITE
-        textSize = 28f
     }
+    // Computed proportionally in start() so boxes look similar to the live overlay at playback scale
+    private var labelStripH = 34f
 
     override suspend fun start(width: Int, height: Int, fps: Int, context: Context) =
         withContext(Dispatchers.IO) {
@@ -81,6 +81,14 @@ class VideoSessionRecorder : SessionRecorder {
             stopped       = false
             videoTrackIndex = -1
             muxerStarted  = false
+
+            // Scale annotation sizes to frame height so they look similar
+            // to the live overlay (Stroke 3f / 11sp) when the video is upscaled on playback.
+            // Reference: 1080p → stroke 3px, text 22px; scale linearly to actual height.
+            val drawScale = encodedHeight / 1080f
+            boxPaint.strokeWidth = (3f * drawScale).coerceAtLeast(2f)
+            labelPaint.textSize  = (22f * drawScale).coerceAtLeast(12f)
+            labelStripH          = labelPaint.textSize * 1.5f
 
             val pfd = openVideoFile(context.applicationContext)
             videoFd = pfd
@@ -124,8 +132,8 @@ class VideoSessionRecorder : SessionRecorder {
                         canvas.drawRect(l, t, r, b, boxPaint)
                         val label = "${det.label} ${"%.0f".format(det.confidence * 100)}%"
                         val lw = labelPaint.measureText(label)
-                        canvas.drawRect(l, t - 34f, l + lw + 8f, t, labelBgPaint)
-                        canvas.drawText(label, l + 4f, t - 8f, labelPaint)
+                        canvas.drawRect(l, t - labelStripH, l + lw + 8f, t, labelBgPaint)
+                        canvas.drawText(label, l + 4f, t - labelPaint.textSize * 0.35f, labelPaint)
                     }
                 }
 
