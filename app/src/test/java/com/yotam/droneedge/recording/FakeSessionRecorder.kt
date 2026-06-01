@@ -21,8 +21,9 @@ class FakeSessionRecorder : SessionRecorder {
     override suspend fun stop(): RecordingResult {
         stopCalled = true
         return RecordingResult(
-            videoUri = Uri.EMPTY,
-            jsonUri = Uri.EMPTY,
+            videoUri   = Uri.EMPTY,
+            jsonUri    = Uri.EMPTY,
+            sessionId  = "session_fake",
             frameCount = framesReceived.size,
             durationMs = 0L,
         )
