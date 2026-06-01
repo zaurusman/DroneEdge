@@ -24,9 +24,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,8 +48,6 @@ import com.yotam.droneedge.ui.theme.FieldSurface
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -63,10 +62,8 @@ data class RecordingEntry(
 
 @Composable
 fun RecordingsScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val recordings by produceState<List<RecordingEntry>>(emptyList()) {
-        value = withContext(Dispatchers.IO) { queryRecordings(context) }
-    }
+    val vm         = viewModel<RecordingsViewModel>()
+    val recordings by vm.recordings.collectAsStateWithLifecycle()
     var playingEntry by remember { mutableStateOf<RecordingEntry?>(null) }
 
     if (playingEntry != null) {
@@ -199,11 +196,11 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
 
 // ── MediaStore query ──────────────────────────────────────────────────────────
 
-private fun queryRecordings(context: Context): List<RecordingEntry> =
+internal fun queryRecordings(context: Context): List<RecordingEntry> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) queryRecordingsMediaStore(context)
     else queryRecordingsFileSystem()
 
-private fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
+internal fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
     val results    = mutableListOf<RecordingEntry>()
     val projection = arrayOf(
         MediaStore.Video.Media._ID,
@@ -242,7 +239,7 @@ private fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
     return results
 }
 
-private fun queryRecordingsFileSystem(): List<RecordingEntry> {
+internal fun queryRecordingsFileSystem(): List<RecordingEntry> {
     val root = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "DroneEdge"
     )
