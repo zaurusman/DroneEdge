@@ -191,6 +191,7 @@ class VideoSessionRecorder : SessionRecorder {
             RecordingResult(
                 videoUri   = videoRowUri ?: Uri.EMPTY,
                 jsonUri    = jsonRowUri  ?: Uri.EMPTY,
+                sessionId  = sessionName,
                 frameCount = frameCount,
                 durationMs = durationMs,
             )
