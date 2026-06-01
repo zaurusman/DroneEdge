@@ -83,8 +83,10 @@ import com.yotam.droneedge.ui.theme.FieldSurface
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
 import com.yotam.droneedge.video.VideoFrame
+import com.yotam.droneedge.video.DjiGogglesVideoSource
 
 private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
+private const val DJI_VENDOR_ID = DjiGogglesVideoSource.VENDOR_ID
 
 @Composable
 fun LiveScreen(
@@ -103,6 +105,7 @@ fun LiveScreen(
     val lastRecording   by vm.lastRecording.collectAsStateWithLifecycle()
     val usbDevice       by vm.usbDevice.collectAsStateWithLifecycle()
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
+    val djiDevice       by vm.djiDevice.collectAsStateWithLifecycle()
 
     val context        = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
@@ -146,16 +149,29 @@ fun LiveScreen(
                 } ?: return
                 when (intent.action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                        if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
-                        else usbManager.requestPermission(device, permIntent)
+                        if (device.vendorId == DJI_VENDOR_ID) {
+                            if (usbManager.hasPermission(device)) vm.useDjiSource(device, ctx)
+                            else usbManager.requestPermission(device, permIntent)
+                        } else {
+                            if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
+                            else usbManager.requestPermission(device, permIntent)
+                        }
                     }
                     ACTION_USB_PERMISSION -> {
                         val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                        if (granted) vm.useUsbSource(device, ctx)
+                        if (granted) {
+                            if (device.vendorId == DJI_VENDOR_ID) vm.useDjiSource(device, ctx)
+                            else vm.useUsbSource(device, ctx)
+                        }
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                        vm.reportError("USB camera disconnected")
-                        vm.clearUsbSource()
+                        if (device.vendorId == DJI_VENDOR_ID) {
+                            vm.reportError("DJI Goggles disconnected")
+                            vm.clearDjiSource()
+                        } else {
+                            vm.reportError("USB camera disconnected")
+                            vm.clearUsbSource()
+                        }
                     }
                 }
             }
@@ -173,12 +189,14 @@ fun LiveScreen(
 
     // Derived labels
     val activeSourceChoice: SourceChoice? = when {
+        djiDevice    != null -> SourceChoice.DJI
         usbDevice    != null -> SourceChoice.USB
         cameraFacing != null -> SourceChoice.CAMERA
         videoUri     != null -> SourceChoice.FILE
         else                 -> null
     }
     val sourceLabel = when {
+        djiDevice    != null -> "DJI"
         usbDevice    != null -> "USB"
         cameraFacing != null -> "Camera"
         videoUri     != null -> "File"
@@ -197,7 +215,7 @@ fun LiveScreen(
                 isPlaying = sessionState == SessionState.RUNNING,
                 modifier  = Modifier.fillMaxSize(),
             )
-            cameraFacing != null -> CameraFrameDisplay(
+            cameraFacing != null || djiDevice != null -> CameraFrameDisplay(
                 frames   = vm.latestFrame,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -346,6 +364,27 @@ fun LiveScreen(
                                         PendingIntent.FLAG_IMMUTABLE,
                                     ),
                                 )
+                            }
+                        }
+                        SourceChoice.DJI -> {
+                            val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+                            val djiDev = usbManager.deviceList.values.firstOrNull { dev ->
+                                dev.vendorId == DJI_VENDOR_ID
+                            }
+                            when {
+                                djiDev == null ->
+                                    vm.reportError("No DJI Goggles detected — connect via USB and power on the drone")
+                                usbManager.hasPermission(djiDev) ->
+                                    vm.useDjiSource(djiDev, context)
+                                else ->
+                                    usbManager.requestPermission(
+                                        djiDev,
+                                        PendingIntent.getBroadcast(
+                                            context, 0,
+                                            Intent(ACTION_USB_PERMISSION),
+                                            PendingIntent.FLAG_IMMUTABLE,
+                                        ),
+                                    )
                             }
                         }
                         SourceChoice.FILE -> filePicker.launch("video/*")
