@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,6 +81,8 @@ fun RecordingsScreen(onBack: () -> Unit) {
     val recordings   by vm.recordings.collectAsStateWithLifecycle()
     val error        by vm.error.collectAsStateWithLifecycle()
     var playingEntry by remember { mutableStateOf<RecordingEntry?>(null) }
+
+    LaunchedEffect(Unit) { vm.reload() }
 
     if (playingEntry != null) {
         RecordingPlayer(entry = playingEntry!!, onBack = { playingEntry = null })
