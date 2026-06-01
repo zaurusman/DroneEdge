@@ -15,6 +15,8 @@ import com.yotam.droneedge.detection.TfliteDetector
 import com.yotam.droneedge.recording.RecordingResult
 import com.yotam.droneedge.recording.SessionRecorder
 import com.yotam.droneedge.recording.VideoSessionRecorder
+import com.yotam.droneedge.recording.renameSession
+import com.yotam.droneedge.recording.sanitizeSessionName
 import com.yotam.droneedge.video.CameraVideoSource
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
@@ -88,6 +90,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── Last completed recording (drives snackbar) ────────────────────────────
     private val _lastRecording = MutableStateFlow<RecordingResult?>(null)
     val lastRecording: StateFlow<RecordingResult?> = _lastRecording.asStateFlow()
+
+    // ── Pending rename (awaiting user input before showing snackbar) ──────────
+    private val _pendingRename = MutableStateFlow<RecordingResult?>(null)
+    val pendingRename: StateFlow<RecordingResult?> = _pendingRename.asStateFlow()
 
     // ── Detection results ─────────────────────────────────────────────────────
     private val _detections = MutableStateFlow<List<Detection>>(emptyList())
@@ -250,13 +256,34 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _recordingState.value = RecordingState.FINALIZING
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { rec.stop() }
-            _lastRecording.value = result
+            _pendingRename.value = result
             _recordingState.value = RecordingState.IDLE
             recorder = null
         }
     }
 
     fun clearLastRecording() { _lastRecording.value = null }
+
+    fun skipNaming(result: RecordingResult) {
+        _pendingRename.value = null
+        _lastRecording.value = result
+    }
+
+    fun finalizeSessionName(result: RecordingResult, name: String) {
+        val sanitized = sanitizeSessionName(name)
+        if (sanitized != null && sanitized != result.sessionId && result.videoUri != null) {
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) {
+                    renameSession(getApplication(), result.videoUri, result.sessionId, sanitized)
+                }
+                _pendingRename.value = null
+                _lastRecording.value = result.copy(sessionId = sanitized)
+            }
+        } else {
+            _pendingRename.value = null
+            _lastRecording.value = result
+        }
+    }
 
     // ── Session control ───────────────────────────────────────────────────────
 

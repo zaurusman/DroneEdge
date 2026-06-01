@@ -2,6 +2,7 @@ package com.yotam.droneedge.ui.live
 
 import android.app.Application
 import com.yotam.droneedge.recording.FakeSessionRecorder
+import com.yotam.droneedge.recording.RecordingResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -9,7 +10,6 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -164,5 +164,40 @@ class LiveViewModelTest {
         // Instead verify clearError on a null error is safe
         vm.clearError()
         assertNull(vm.error.value)
+    }
+
+    // ── Pending rename (post-stop naming) ─────────────────────────────────────
+
+    @Test
+    fun `initial pendingRename is null`() {
+        assertNull(vm.pendingRename.value)
+    }
+
+    @Test
+    fun `skipNaming clears pendingRename and sets lastRecording`() {
+        val fakeResult = RecordingResult(
+            videoUri   = null,
+            jsonUri    = null,
+            sessionId  = "session_fake",
+            frameCount = 0,
+            durationMs = 0L,
+        )
+        vm.skipNaming(fakeResult)
+        assertNull(vm.pendingRename.value)
+        assertEquals(fakeResult, vm.lastRecording.value)
+    }
+
+    @Test
+    fun `finalizeSessionName with blank name skips rename and sets lastRecording`() {
+        val fakeResult = RecordingResult(
+            videoUri   = null,
+            jsonUri    = null,
+            sessionId  = "session_fake",
+            frameCount = 0,
+            durationMs = 0L,
+        )
+        vm.finalizeSessionName(fakeResult, "   ")
+        assertNull(vm.pendingRename.value)
+        assertEquals(fakeResult, vm.lastRecording.value)
     }
 }

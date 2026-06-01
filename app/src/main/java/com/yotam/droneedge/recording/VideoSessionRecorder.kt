@@ -189,8 +189,8 @@ class VideoSessionRecorder : SessionRecorder {
             val durationMs = if (encoderFps > 0 && frameCount > 0)
                 (frameCount.toLong() * 1_000L) / encoderFps else 0L
             RecordingResult(
-                videoUri   = videoRowUri ?: Uri.EMPTY,
-                jsonUri    = jsonRowUri  ?: Uri.EMPTY,
+                videoUri   = videoRowUri,
+                jsonUri    = jsonRowUri,
                 sessionId  = sessionName,
                 frameCount = frameCount,
                 durationMs = durationMs,
