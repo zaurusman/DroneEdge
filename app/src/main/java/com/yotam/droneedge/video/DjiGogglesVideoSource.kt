@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import java.io.ByteArrayOutputStream
 
 class DjiGogglesVideoSource(
@@ -63,7 +65,7 @@ class DjiGogglesVideoSource(
             val bufInfo = MediaCodec.BufferInfo()
             var consecutiveErrors = 0
 
-            while (running) {
+            while (running && currentCoroutineContext().isActive) {
                 val len = connection.bulkTransfer(info.endpointIn, buf, buf.size, 1_000)
                 if (len < 0) {
                     if (++consecutiveErrors >= 10) error("DJI video stream lost")
@@ -94,25 +96,29 @@ class DjiGogglesVideoSource(
                 val flags = if (isSpsPpsNal(nal)) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
                 codec.queueInputBuffer(inputIndex, 0, nal.size, System.currentTimeMillis() * 1000L, flags)
 
-                when (val outIdx = codec.dequeueOutputBuffer(bufInfo, 10_000)) {
-                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        val fmt = codec.outputFormat
-                        width  = fmt.getInteger(MediaFormat.KEY_WIDTH)
-                        height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                var outIdx = codec.dequeueOutputBuffer(bufInfo, 10_000)
+                while (outIdx != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                    when {
+                        outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            val fmt = codec.outputFormat
+                            width  = fmt.getInteger(MediaFormat.KEY_WIDTH)
+                            height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                        }
+                        outIdx >= 0 -> {
+                            val image = codec.getOutputImage(outIdx)
+                            val bmp   = if (image != null) imageToBitmap(image, width, height) else null
+                            image?.close()
+                            codec.releaseOutputBuffer(outIdx, false)
+                            if (bmp != null) emit(VideoFrame(
+                                index       = frameIndex++,
+                                timestampMs = System.currentTimeMillis(),
+                                width       = width,
+                                height      = height,
+                                bitmap      = bmp,
+                            ))
+                        }
                     }
-                    in 0..Int.MAX_VALUE -> {
-                        val image = codec.getOutputImage(outIdx)
-                        val bmp   = if (image != null) imageToBitmap(image, width, height) else null
-                        image?.close()
-                        codec.releaseOutputBuffer(outIdx, false)
-                        if (bmp != null) emit(VideoFrame(
-                            index       = frameIndex++,
-                            timestampMs = System.currentTimeMillis(),
-                            width       = width,
-                            height      = height,
-                            bitmap      = bmp,
-                        ))
-                    }
+                    outIdx = codec.dequeueOutputBuffer(bufInfo, 0)
                 }
             }
         } finally {
