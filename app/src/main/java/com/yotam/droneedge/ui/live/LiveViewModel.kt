@@ -18,6 +18,7 @@ import com.yotam.droneedge.recording.VideoSessionRecorder
 import com.yotam.droneedge.video.CameraVideoSource
 import com.yotam.droneedge.video.FakeVideoSource
 import com.yotam.droneedge.video.FileReplayVideoSource
+import com.yotam.droneedge.video.DjiGogglesVideoSource
 import com.yotam.droneedge.video.UsbUvcVideoSource
 import com.yotam.droneedge.video.VideoFrame
 import com.yotam.droneedge.video.VideoSource
@@ -55,6 +56,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── USB device (null = no USB source) ────────────────────────────────────
     private val _usbDevice = MutableStateFlow<UsbDevice?>(null)
     val usbDevice: StateFlow<UsbDevice?> = _usbDevice.asStateFlow()
+
+    // ── DJI Goggles device (null = no DJI source) ────────────────────────────
+    private val _djiDevice = MutableStateFlow<UsbDevice?>(null)
+    val djiDevice: StateFlow<UsbDevice?> = _djiDevice.asStateFlow()
 
     // ── Camera facing (null = no camera source) ───────────────────────────────
     private val _cameraFacing = MutableStateFlow<Int?>(null)
@@ -111,6 +116,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _videoUri.value  = uri
         _usbDevice.value = null
         _cameraFacing.value = null
+        _djiDevice.value    = null
     }
 
     fun useFakeSource() {
@@ -119,6 +125,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _videoUri.value  = null
         _usbDevice.value = null
         _cameraFacing.value = null
+        _djiDevice.value    = null
     }
 
     fun useUsbSource(device: UsbDevice, context: android.content.Context) {
@@ -127,6 +134,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _usbDevice.value = device
         _videoUri.value  = null
         _cameraFacing.value = null
+        _djiDevice.value    = null
     }
 
     fun clearUsbSource() {
@@ -139,12 +147,28 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         // Fix 1 (flow-completion auto-stop) will handle session cleanup.
     }
 
+    fun useDjiSource(device: UsbDevice, context: android.content.Context) {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource         = DjiGogglesVideoSource(context.applicationContext, device)
+        _djiDevice.value    = device
+        _videoUri.value     = null
+        _usbDevice.value    = null
+        _cameraFacing.value = null
+    }
+
+    fun clearDjiSource() {
+        if (_djiDevice.value == null) return
+        _djiDevice.value = null
+        if (_sessionState.value == SessionState.IDLE) videoSource = FakeVideoSource()
+    }
+
     fun useCameraSource(facing: Int, context: Context, lifecycleOwner: LifecycleOwner) {
         if (_sessionState.value != SessionState.IDLE) return
         videoSource         = CameraVideoSource(context.applicationContext, lifecycleOwner, facing)
         _cameraFacing.value = facing
         _videoUri.value     = null
         _usbDevice.value    = null
+        _djiDevice.value    = null
     }
 
     fun clearCameraSource() {
@@ -167,9 +191,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         } ?: return
         val usbManager = context.getSystemService(android.content.Context.USB_SERVICE) as android.hardware.usb.UsbManager
         if (usbManager.hasPermission(device)) {
-            useUsbSource(device, context)
+            if (device.vendorId == DjiGogglesVideoSource.VENDOR_ID) useDjiSource(device, context)
+            else useUsbSource(device, context)
         }
-        // If no permission, the BroadcastReceiver in LiveScreen will handle the permission flow.
     }
 
     fun reportError(message: String) {

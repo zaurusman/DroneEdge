@@ -7,4 +7,7 @@
         in code by scanning interface classes after connection.
     -->
     <usb-device class="14" />
+
+    <!-- DJI Goggles 2 / Integra: vendor ID 0x2CA3 = 11427 decimal -->
+    <usb-device vendor-id="11427" />
 </resources>
