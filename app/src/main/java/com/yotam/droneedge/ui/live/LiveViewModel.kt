@@ -270,7 +270,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         armRecording()
 
         pipelineJob = viewModelScope.launch {
-            // Coroutine 1: collect frames at full source speed, track preview FPS.
+            // Coroutine 1: collect frames at full source speed, track preview FPS, record.
             launch {
                 videoSource.frames.collect { frame ->
                     val now = System.currentTimeMillis()
@@ -280,6 +280,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         previewFrameTimes.removeFirst()
                     _previewFps.value = previewFrameTimes.size.toFloat()
                     _latestFrame.value = frame
+
+                    if (_recordingState.value == RecordingState.ARMED) {
+                        recorder?.onFrame(frame, _detections.value)
+                    }
                 }
                 // Flow ended without an explicit stop() — source disconnected or failed.
                 if (_sessionState.value == SessionState.RUNNING) {
@@ -294,10 +298,6 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 _latestFrame.filterNotNull().collect { frame ->
                     val results = detector.detect(frame)
                     _detections.value = results
-
-                    if (_recordingState.value == RecordingState.ARMED) {
-                        recorder?.onFrame(frame, results)
-                    }
 
                     val now = System.currentTimeMillis()
                     inferenceFrameTimes.addLast(now)

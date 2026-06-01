@@ -3,6 +3,7 @@ package com.yotam.droneedge.detection
 import android.content.Context
 import android.graphics.Bitmap
 import com.yotam.droneedge.video.VideoFrame
+import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import java.io.Closeable
 import java.io.File
@@ -26,15 +27,16 @@ class TfliteDetector(
     context: Context,
     private val modelFileName: String = "detect.tflite",
     private val labelsFileName: String = "labelmap.txt",
-    private val outputParser: DetectionOutputParser = SsdOutputParser(),
-    private val inputWidth: Int = 300,
-    private val inputHeight: Int = 300,
     val confidenceThreshold: Float = 0.5f,
     modelFile: File? = null,
 ) : Detector, Closeable {
 
     private val interpreter: Interpreter
     val labels: List<String>
+    private val inputWidth: Int
+    private val inputHeight: Int
+    private val inputDataType: DataType
+    private val outputParser: DetectionOutputParser
 
     init {
         val model = if (modelFile != null) loadModelFromFile(modelFile)
@@ -42,12 +44,29 @@ class TfliteDetector(
         val options = Interpreter.Options().apply { numThreads = 4 }
         interpreter = Interpreter(model, options)
         labels = loadLabelsForModel(context, modelFile, labelsFileName)
+
+        // Read input shape and dtype directly from the model — works for any size or dtype.
+        // Expected shape: [batch, height, width, channels]
+        val inputTensor = interpreter.getInputTensor(0)
+        val inputShape = inputTensor.shape()
+        inputHeight   = inputShape[1]
+        inputWidth    = inputShape[2]
+        inputDataType = inputTensor.dataType()
+
+        // Auto-select output parser: YOLO if single 3-D output tensor, SSD otherwise.
+        outputParser = if (interpreter.outputTensorCount == 1) {
+            val outShape = interpreter.getOutputTensor(0).shape() // e.g. [1, 5, 8400]
+            if (outShape.size == 3) YoloOutputParser(numAnchors = outShape[2], numValues = outShape[1])
+            else SsdOutputParser()
+        } else {
+            SsdOutputParser()
+        }
     }
 
     override suspend fun detect(frame: VideoFrame): List<Detection> {
         val bitmap = frame.bitmap ?: return emptyList()
 
-        val inputBuffer = bitmapToByteBuffer(bitmap, inputWidth, inputHeight)
+        val inputBuffer = bitmapToByteBuffer(bitmap, inputWidth, inputHeight, inputDataType)
         val outputs = outputParser.allocateOutputs(maxDetections = 10)
         val outputMap = HashMap<Int, Any>(outputs.size).also { map ->
             outputs.forEachIndexed { i, o -> map[i] = o }
@@ -88,19 +107,29 @@ class TfliteDetector(
 
     /**
      * Scale [bitmap] to [width]×[height] and pack RGB pixels into a direct [ByteBuffer].
-     * Quantized uint8 models expect raw byte values (0–255); no normalisation needed.
+     * UINT8 models get raw byte values (0–255); FLOAT32 models get normalized floats (0.0–1.0).
      */
-    private fun bitmapToByteBuffer(bitmap: Bitmap, width: Int, height: Int): ByteBuffer {
+    private fun bitmapToByteBuffer(bitmap: Bitmap, width: Int, height: Int, dataType: DataType): ByteBuffer {
         val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
-        val buffer = ByteBuffer.allocateDirect(width * height * 3).apply {
+        val bytesPerChannel = if (dataType == DataType.FLOAT32) 4 else 1
+        val buffer = ByteBuffer.allocateDirect(width * height * 3 * bytesPerChannel).apply {
             order(ByteOrder.nativeOrder())
         }
         val pixels = IntArray(width * height)
         scaled.getPixels(pixels, 0, width, 0, 0, width, height)
         for (pixel in pixels) {
-            buffer.put(((pixel shr 16) and 0xFF).toByte()) // R
-            buffer.put(((pixel shr 8)  and 0xFF).toByte()) // G
-            buffer.put((pixel          and 0xFF).toByte()) // B
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8)  and 0xFF
+            val b =  pixel         and 0xFF
+            if (dataType == DataType.FLOAT32) {
+                buffer.putFloat(r / 255f)
+                buffer.putFloat(g / 255f)
+                buffer.putFloat(b / 255f)
+            } else {
+                buffer.put(r.toByte())
+                buffer.put(g.toByte())
+                buffer.put(b.toByte())
+            }
         }
         buffer.rewind()
         return buffer
