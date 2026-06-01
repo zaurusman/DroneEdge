@@ -55,7 +55,7 @@ class VideoSessionRecorder : SessionRecorder {
     private val bufferInfo = MediaCodec.BufferInfo()
 
     private val boxPaint = Paint().apply {
-        color = Color.CYAN
+        color = 0xFFF97316.toInt()   // matches FieldAccent orange used by live overlay
         style = Paint.Style.STROKE
         strokeWidth = 4f
         isAntiAlias = false
