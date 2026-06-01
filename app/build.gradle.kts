@@ -37,6 +37,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     // Prevent Gradle from compressing the TFLite model file — the interpreter requires it mmapped raw
     androidResources {
