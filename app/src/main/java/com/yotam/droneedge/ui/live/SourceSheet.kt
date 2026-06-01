@@ -24,7 +24,7 @@ import com.yotam.droneedge.ui.theme.FieldSurfaceElevated
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
 
-enum class SourceChoice { CAMERA, USB, FILE, FAKE }
+enum class SourceChoice { CAMERA, USB, FILE, DJI, FAKE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,11 +69,10 @@ fun SourceSheet(
                 onClick  = { onSelect(SourceChoice.FILE) },
             )
             SourceRow(
-                label    = "DJI Goggles",
-                active   = false,
-                enabled  = false,
-                suffix   = "coming soon",
-                onClick  = {},
+                label   = "DJI Goggles",
+                active  = activeChoice == SourceChoice.DJI,
+                enabled = true,
+                onClick = { onSelect(SourceChoice.DJI) },
             )
             SourceRow(
                 label    = "Fake (dev)",
