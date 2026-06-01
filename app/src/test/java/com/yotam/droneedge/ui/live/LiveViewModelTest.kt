@@ -6,7 +6,9 @@ import com.yotam.droneedge.recording.RecordingResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,6 +40,9 @@ class LiveViewModelTest {
 
     @After
     fun tearDown() {
+        // Cancel any in-flight coroutines before resetting Main to prevent
+        // UncaughtExceptions from IO continuations trying to resume on a torn-down dispatcher.
+        if (vm.sessionState.value == SessionState.RUNNING) vm.stop()
         Dispatchers.resetMain()
     }
 
@@ -199,5 +204,31 @@ class LiveViewModelTest {
         vm.finalizeSessionName(fakeResult, "   ")
         assertNull(vm.pendingRename.value)
         assertEquals(fakeResult, vm.lastRecording.value)
+    }
+
+    // ── Recording timer ───────────────────────────────────────────────────────
+
+    @Test
+    fun `initial recordingElapsedMs is zero`() {
+        assertEquals(0L, vm.recordingElapsedMs.value)
+    }
+
+    @Test
+    fun `timer advances while recording is armed`() = runTest(testDispatcher) {
+        vm.start()
+        advanceTimeBy(2500L)
+        val elapsed = vm.recordingElapsedMs.value
+        vm.stop()
+        assert(elapsed >= 2000L) {
+            "Expected elapsed >= 2000ms, was $elapsed"
+        }
+    }
+
+    @Test
+    fun `timer resets to zero on stop`() = runTest(testDispatcher) {
+        vm.start()
+        advanceTimeBy(3000L)
+        vm.stop()
+        assertEquals(0L, vm.recordingElapsedMs.value)
     }
 }

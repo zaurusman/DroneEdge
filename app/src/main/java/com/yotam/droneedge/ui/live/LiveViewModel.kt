@@ -26,6 +26,7 @@ import com.yotam.droneedge.video.VideoFrame
 import com.yotam.droneedge.video.VideoSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,6 +114,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val previewFrameTimes = ArrayDeque<Long>()
     private val inferenceFrameTimes = ArrayDeque<Long>()
     private var pipelineJob: Job? = null
+
+    // ── Recording elapsed timer ───────────────────────────────────────────────
+    private val _recordingElapsedMs = MutableStateFlow(0L)
+    val recordingElapsedMs: StateFlow<Long> = _recordingElapsedMs.asStateFlow()
+    private var timerJob: Job? = null
 
     // ── Source selection (only while IDLE) ────────────────────────────────────
 
@@ -244,6 +250,13 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (!canArm(_sessionState.value, _recordingState.value)) return
         val rec = recorderFactory()
         recorder = rec
+        _recordingElapsedMs.value = 0L
+        timerJob = viewModelScope.launch {
+            while (true) {
+                delay(1000L)
+                _recordingElapsedMs.value += 1000L
+            }
+        }
         viewModelScope.launch(Dispatchers.IO) {
             rec.start(videoSource.width, videoSource.height, 30, getApplication())
             _recordingState.value = RecordingState.ARMED
@@ -251,6 +264,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disarmRecording() {
+        timerJob?.cancel()
+        timerJob = null
         if (!canDisarm(_recordingState.value)) return
         val rec = recorder ?: return
         _recordingState.value = RecordingState.FINALIZING
@@ -344,6 +359,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         videoSource.stop()
         pipelineJob?.cancel()
         pipelineJob = null
+        timerJob?.cancel()
+        timerJob = null
+        _recordingElapsedMs.value = 0L
         _detections.value = emptyList()
         _previewFps.value = 0f
         _inferenceFps.value = 0f
@@ -353,6 +371,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        timerJob?.cancel()
         if (canDisarm(_recordingState.value)) disarmRecording()
         videoSource.stop()
         pipelineJob?.cancel()
