@@ -217,6 +217,14 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     fun setDetectorMode(mode: DetectorMode, context: android.content.Context? = null, modelFile: File? = null) {
         if (_sessionState.value != SessionState.IDLE) return
         when (mode) {
+            DetectorMode.NO_MODEL -> {
+                tfliteDetector?.close()
+                tfliteDetector = null
+                detector = object : Detector { override suspend fun detect(frame: VideoFrame) = emptyList<Detection>() }
+                _detectorMode.value = DetectorMode.NO_MODEL
+                _activeModelFile.value = null
+                _error.value = null
+            }
             DetectorMode.FAKE -> {
                 tfliteDetector?.close()
                 tfliteDetector = null
