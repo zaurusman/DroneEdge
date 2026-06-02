@@ -339,17 +339,30 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory  = { ctx ->
-                (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).apply {
-                    player        = exoPlayer
-                    resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    useController = true
-                }
-            },
-            update = { it.player = exoPlayer },
-        )
+        Column(modifier = Modifier.fillMaxSize()) {
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                factory  = { ctx ->
+                    (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).apply {
+                        player        = exoPlayer
+                        resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        useController = true
+                    }
+                },
+                update = { it.player = exoPlayer },
+            )
+            DetectionTimeline(
+                fractions   = detectionFractions,
+                currentFrac = if (entry.durationMs > 0L)
+                    (currentPositionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f)
+                else 0f,
+                modifier    = Modifier
+                    .fillMaxWidth()
+                    .height(24.dp),
+            )
+        }
         IconButton(
             onClick  = onBack,
             modifier = Modifier
@@ -368,16 +381,6 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
                 .padding(16.dp)
                 .background(Color(0x80000000))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-        DetectionTimeline(
-            fractions   = detectionFractions,
-            currentFrac = if (entry.durationMs > 0L)
-                (currentPositionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f)
-            else 0f,
-            modifier    = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(16.dp),
         )
     }
 }
