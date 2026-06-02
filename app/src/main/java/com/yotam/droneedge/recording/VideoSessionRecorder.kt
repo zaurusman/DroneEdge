@@ -77,7 +77,6 @@ class VideoSessionRecorder : SessionRecorder {
             encodedHeight = ((height + 15) / 16) * 16
             encoderFps    = fps
             frameCount    = 0
-            firstTimestampMs = -1L
             stopped       = false
             videoTrackIndex = -1
             muxerStarted  = false
@@ -90,10 +89,13 @@ class VideoSessionRecorder : SessionRecorder {
             labelPaint.textSize  = (22f * drawScale).coerceAtLeast(12f)
             labelStripH          = labelPaint.textSize * 1.5f
 
+            firstTimestampMs = System.currentTimeMillis()
+            jsonWriter = openJsonWriter(context.applicationContext)
+            jsonWriter?.appendLine("""{"sessionStart":$firstTimestampMs}""")
+
             val pfd = openVideoFile(context.applicationContext)
             videoFd = pfd
             muxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            jsonWriter = openJsonWriter(context.applicationContext)
 
             val format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, encodedWidth, encodedHeight
@@ -116,8 +118,6 @@ class VideoSessionRecorder : SessionRecorder {
                 if (stopped) return@withLock
                 val bmp = frame.bitmap ?: return@withLock
                 val enc = encoder ?: return@withLock
-
-                if (firstTimestampMs < 0L) firstTimestampMs = frame.timestampMs
 
                 // Annotate a mutable copy
                 val annotated = bmp.copy(Bitmap.Config.ARGB_8888, true)
