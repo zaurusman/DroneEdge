@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -139,9 +140,14 @@ private fun RecordingList(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
-                Text("←", color = FieldAccent, fontSize = 20.sp)
-            }
+            Text(
+                text     = "←",
+                color    = FieldAccent,
+                fontSize = 32.sp,
+                modifier = Modifier
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 8.dp),
+            )
             Text(
                 text          = "GALLERY",
                 color         = FieldTextPrimary,
@@ -196,13 +202,13 @@ private fun RecordingRow(
             modifier          = Modifier
                 .fillMaxWidth()
                 .combinedClickable(onClick = onClick, onLongClick = { showMenu = true })
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Thumbnail
             Box(
                 modifier         = Modifier
-                    .size(64.dp, 36.dp)
+                    .size(90.dp, 50.dp)
                     .background(FieldBorder),
                 contentAlignment = Alignment.Center,
             ) {
@@ -227,18 +233,18 @@ private fun RecordingRow(
                         text       = entry.sessionName,
                         color      = FieldTextPrimary,
                         fontWeight = FontWeight.Medium,
-                        fontSize   = 13.sp,
+                        fontSize   = 18.sp,
                         modifier   = Modifier.weight(1f),
                     )
-                    Text(text = durationStr, color = FieldTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(text = durationStr, color = FieldTextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
                 Row(
                     modifier              = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(text = dateStr, color = FieldTextSecondary, fontSize = 11.sp)
+                    Text(text = dateStr, color = FieldTextSecondary, fontSize = 15.sp)
                     val detStr = if (entry.detectionCount >= 0) "${entry.detectionCount} det." else ""
-                    if (detStr.isNotEmpty()) Text(text = detStr, color = FieldTextMuted, fontSize = 11.sp)
+                    if (detStr.isNotEmpty()) Text(text = detStr, color = FieldTextMuted, fontSize = 15.sp)
                 }
             }
         }
@@ -370,7 +376,7 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
                 .padding(8.dp)
                 .background(Color(0x80000000)),
         ) {
-            Text("←", color = FieldAccent, fontSize = 20.sp)
+            Text("←", color = FieldAccent, fontSize = 32.sp)
         }
         Text(
             text     = entry.sessionName,

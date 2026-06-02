@@ -445,9 +445,9 @@ private fun BottomBar(
             OutlinedButton(
                 onClick = onGallery,
                 colors  = ButtonDefaults.outlinedButtonColors(
-                    contentColor = FieldTextMuted,
+                    contentColor = FieldAccent,
                 ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FieldAccent),
             ) { Text("Gallery", fontSize = 12.sp) }
         }
 

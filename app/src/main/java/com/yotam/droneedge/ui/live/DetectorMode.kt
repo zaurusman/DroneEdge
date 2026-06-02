@@ -3,6 +3,7 @@ package com.yotam.droneedge.ui.live
 import android.content.res.AssetManager
 
 enum class DetectorMode {
+    NO_MODEL,
     FAKE,
     TFLITE,
     // To add a new model:
@@ -26,6 +27,13 @@ fun ModelDescriptor.isAvailable(assets: AssetManager): Boolean {
 
 object ModelRegistry {
     val all: List<ModelDescriptor> = listOf(
+        ModelDescriptor(
+            mode        = DetectorMode.NO_MODEL,
+            displayName = "No Model",
+            shortLabel  = "Off",
+            description = "Video preview only — detection is disabled. No bounding boxes or detection events.",
+            assetFile   = null,
+        ),
         ModelDescriptor(
             mode        = DetectorMode.FAKE,
             displayName = "Fake Detector",
