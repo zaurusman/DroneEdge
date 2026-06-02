@@ -55,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.view.LayoutInflater
+import com.yotam.droneedge.R
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -340,7 +342,7 @@ private fun RecordingPlayer(entry: RecordingEntry, onBack: () -> Unit) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory  = { ctx ->
-                PlayerView(ctx).apply {
+                (LayoutInflater.from(ctx).inflate(R.layout.player_view, null) as PlayerView).apply {
                     player        = exoPlayer
                     resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     useController = true
