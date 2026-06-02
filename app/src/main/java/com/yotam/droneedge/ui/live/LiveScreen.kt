@@ -136,6 +136,18 @@ fun LiveScreen(
         view.keepScreenOn = sessionState == SessionState.RUNNING
     }
 
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP  -> vm.onAppBackgrounded()
+                androidx.lifecycle.Lifecycle.Event.ON_START -> vm.onAppForegrounded()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->

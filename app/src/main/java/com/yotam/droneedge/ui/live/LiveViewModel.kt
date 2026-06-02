@@ -252,6 +252,23 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearError() { _error.value = null }
 
+    // ── Background auto-stop ──────────────────────────────────────────────────
+
+    private var backgroundStopJob: Job? = null
+
+    fun onAppBackgrounded() {
+        if (_recordingState.value != RecordingState.ARMED) return
+        backgroundStopJob = viewModelScope.launch {
+            delay(10_000L)
+            disarmRecording()
+        }
+    }
+
+    fun onAppForegrounded() {
+        backgroundStopJob?.cancel()
+        backgroundStopJob = null
+    }
+
     // ── Recording control ─────────────────────────────────────────────────────
 
     fun armRecording() {
