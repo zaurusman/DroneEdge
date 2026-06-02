@@ -260,7 +260,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (_recordingState.value != RecordingState.ARMED) return
         backgroundStopJob = viewModelScope.launch {
             delay(10_000L)
-            disarmRecording()
+            stop()
         }
     }
 
