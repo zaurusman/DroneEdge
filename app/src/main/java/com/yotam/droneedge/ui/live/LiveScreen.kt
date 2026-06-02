@@ -131,6 +131,11 @@ fun LiveScreen(
         }
     }
 
+    val view = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(sessionState) {
+        view.keepScreenOn = sessionState == SessionState.RUNNING
+    }
+
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
