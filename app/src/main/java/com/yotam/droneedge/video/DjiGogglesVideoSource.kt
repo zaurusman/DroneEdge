@@ -21,7 +21,13 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class DjiGogglesVideoSource(
     private val context: Context,
@@ -37,11 +43,31 @@ class DjiGogglesVideoSource(
     @Volatile private var frameIndex = 0L
 
     override val frames: Flow<VideoFrame> = flow {
+        val log = openLogWriter(context)
+        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        log?.appendLine("=== DroneEdge DJI session $ts ===")
+        log?.appendLine("device: ${device.deviceName}  vendorId=0x%04x  productId=0x%04x"
+            .format(device.vendorId, device.productId))
+        log?.appendLine("interfaceCount=${device.interfaceCount}")
+        for (i in 0 until device.interfaceCount) {
+            val iface = device.getInterface(i)
+            log?.appendLine("  iface[$i] class=0x%02x sub=0x%02x proto=0x%02x endpoints=${iface.endpointCount}"
+                .format(iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol))
+        }
+
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val info = findBulkInterface(device)
-            ?: error("DJI device connected but no streaming interface found")
+        if (info == null) {
+            log?.appendLine("ERROR: no bulk interface found — aborting")
+            log?.flush(); log?.close()
+            error("DJI device connected but no streaming interface found")
+        }
         val connection = usbManager.openDevice(device)
-            ?: error("USB permission denied for DJI Goggles")
+        if (connection == null) {
+            log?.appendLine("ERROR: openDevice returned null (permission denied?)")
+            log?.flush(); log?.close()
+            error("USB permission denied for DJI Goggles")
+        }
 
         val codec = try {
             MediaCodec.createDecoderByType("video/avc").also { c ->
@@ -50,15 +76,19 @@ class DjiGogglesVideoSource(
                 c.start()
             }
         } catch (e: Exception) {
+            log?.appendLine("ERROR: H.264 decoder init failed: ${e.message}")
+            log?.flush(); log?.close()
             connection.close()
             error("Could not initialise H.264 decoder")
         }
 
         try {
-            check(connection.claimInterface(info.iface, true)) {
-                "Cannot claim DJI streaming interface"
-            }
+            val claimed = connection.claimInterface(info.iface, true)
+            log?.appendLine("claimInterface(${info.ifaceNumber}): $claimed")
+            check(claimed) { "Cannot claim DJI streaming interface" }
+            log?.appendLine("sending startup sequence…")
             sendStartupSequence(connection, info)
+            log?.appendLine("startup sequence sent — waiting for packets")
 
             val framer  = DumlFramer()
             val buf     = ByteArray(16_384)
@@ -75,16 +105,14 @@ class DjiGogglesVideoSource(
 
                 val packet = framer.feed(buf, len) ?: continue
 
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "DUML src=0x%02x dst=0x%02x cmdSet=0x%02x cmdId=0x%02x payLen=%d"
-                        .format(packet.src, packet.dst, packet.cmdSet, packet.cmdId, packet.payload.size))
-                    if (packet.payload.isNotEmpty()) {
-                        val preview = packet.payload.take(16).joinToString(" ") { "0x%02x".format(it) }
-                        Log.d(TAG, "  payload preview: $preview")
-                    }
-                }
+                val payHex = packet.payload.take(16).joinToString(" ") { "0x%02x".format(it) }
+                val logLine = "DUML src=0x%02x dst=0x%02x cmdSet=0x%02x cmdId=0x%02x payLen=%d  [%s]"
+                    .format(packet.src, packet.dst, packet.cmdSet, packet.cmdId, packet.payload.size, payHex)
+                log?.appendLine(logLine)
+                if (BuildConfig.DEBUG) Log.d(TAG, logLine)
 
                 if (packet.cmdSet != VIDEO_CMD_SET || packet.cmdId != VIDEO_CMD_ID) continue
+                log?.appendLine("  ^^^ VIDEO PACKET — matched cmdSet=0x%02x cmdId=0x%02x".format(VIDEO_CMD_SET, VIDEO_CMD_ID))
                 val nal = packet.payload
                 if (nal.isEmpty()) continue
 
@@ -122,6 +150,9 @@ class DjiGogglesVideoSource(
                 }
             }
         } finally {
+            log?.appendLine("=== session ended ===")
+            log?.flush()
+            log?.close()
             try { codec.stop() } catch (_: Exception) {}
             codec.release()
             connection.releaseInterface(info.iface)
@@ -238,5 +269,13 @@ class DjiGogglesVideoSource(
         // Update after inspecting Logcat output on first hardware connection.
         const val VIDEO_CMD_SET = 0x09
         const val VIDEO_CMD_ID  = 0x00
+
+        fun openLogWriter(context: Context): BufferedWriter? = runCatching {
+            val file = File(context.getExternalFilesDir(null), "dji_duml_log.txt")
+            BufferedWriter(FileWriter(file, false)) // overwrite each session
+        }.getOrNull()
+
+        fun logFilePath(context: Context): String =
+            File(context.getExternalFilesDir(null), "dji_duml_log.txt").absolutePath
     }
 }
