@@ -1,4 +1,4 @@
-package com.yotam.droneedge.video
+package com.droneedge.app.video
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow

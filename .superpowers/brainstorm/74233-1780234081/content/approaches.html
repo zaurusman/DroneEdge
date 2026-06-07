@@ -1,0 +1,86 @@
+<h2>Bottom Bar Approaches</h2>
+<p class="subtitle">Source and Model both use sheets. The question is how to arrange the bar itself.</p>
+
+<div class="cards">
+
+  <!-- Option A: Single flat bar -->
+  <div class="card" data-choice="flat-bar" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <!-- Full mockup: idle + running states -->
+      <div style="margin-bottom:8px;">
+        <div style="color:#4B5563;font-size:7px;letter-spacing:1px;margin-bottom:4px;">IDLE STATE</div>
+        <div style="background:#111;border-top:1px solid #1F2937;padding:10px 12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <div style="border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:5px 10px;border-radius:4px;">Recordings</div>
+          <div style="border:1px solid #F97316;color:#F97316;font-size:8px;padding:5px 10px;border-radius:4px;">Camera ▾</div>
+          <div style="border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:5px 10px;border-radius:4px;">TFLite ▾</div>
+          <div style="margin-left:auto;background:#F97316;color:#000;font-size:8px;padding:5px 12px;border-radius:4px;font-weight:700;">START</div>
+        </div>
+      </div>
+      <div>
+        <div style="color:#4B5563;font-size:7px;letter-spacing:1px;margin-bottom:4px;">RUNNING STATE</div>
+        <div style="background:#111;border-top:1px solid #1F2937;padding:10px 12px;display:flex;align-items:center;gap:6px;">
+          <div style="border:1px solid #DC2626;background:#DC262622;color:#F87171;font-size:8px;padding:5px 10px;border-radius:4px;font-weight:600;">● REC</div>
+          <div style="margin-left:auto;background:#F97316;color:#000;font-size:8px;padding:5px 12px;border-radius:4px;font-weight:700;">STOP</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Single Bar, State-Switched</h3>
+      <p>One row. IDLE shows source, model, nav. RUNNING collapses to REC + STOP only. Maximum screen space while flying. Simple to build.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Two-zone persistent bar -->
+  <div class="card" data-choice="two-zone" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <div style="color:#4B5563;font-size:7px;letter-spacing:1px;margin-bottom:4px;">BOTH STATES (setup dims when running)</div>
+      <div style="background:#111;border-top:1px solid #1F2937;">
+        <!-- Setup row -->
+        <div style="padding:7px 12px;border-bottom:1px solid #1F2937;display:flex;align-items:center;gap:6px;">
+          <div style="border:1px solid #F97316;color:#F97316;font-size:8px;padding:4px 8px;border-radius:4px;">Camera ▾</div>
+          <div style="border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:4px 8px;border-radius:4px;">TFLite ▾</div>
+          <div style="margin-left:auto;border:1px solid #374151;color:#6B7280;font-size:8px;padding:4px 8px;border-radius:4px;">Recordings</div>
+        </div>
+        <!-- Session row -->
+        <div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="border:1px solid #DC2626;background:#DC262622;color:#F87171;font-size:8px;padding:6px 12px;border-radius:4px;font-weight:600;">● REC</div>
+          <div style="background:#F97316;color:#000;font-size:9px;padding:6px 20px;border-radius:4px;font-weight:700;">START</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Two-Zone Persistent Bar</h3>
+      <p>Setup row (source, model, nav) always visible but dims during RUNNING. Session row always shows REC + Start/Stop. Consistent layout, no state jump.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Side drawer for config -->
+  <div class="card" data-choice="side-drawer" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <div style="display:flex;gap:8px;height:120px;">
+        <!-- Main screen -->
+        <div style="flex:1;background:#111;border:1px solid #1F2937;position:relative;display:flex;flex-direction:column;justify-content:flex-end;">
+          <div style="padding:6px 8px;border-top:1px solid #1F2937;display:flex;align-items:center;justify-content:space-between;">
+            <div style="border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:5px 8px;border-radius:4px;">&#9776;</div>
+            <div style="display:flex;gap:4px;">
+              <div style="border:1px solid #DC2626;background:#DC262622;color:#F87171;font-size:8px;padding:5px 8px;border-radius:4px;">● REC</div>
+              <div style="background:#F97316;color:#000;font-size:8px;padding:5px 10px;border-radius:4px;font-weight:700;">START</div>
+            </div>
+          </div>
+        </div>
+        <!-- Drawer open -->
+        <div style="width:90px;background:#161616;border:1px solid #1F2937;padding:8px;display:flex;flex-direction:column;gap:6px;">
+          <div style="color:#4B5563;font-size:7px;letter-spacing:1px;">CONFIG</div>
+          <div style="border:1px solid #F97316;color:#F97316;font-size:7px;padding:4px 6px;border-radius:3px;">Camera ▾</div>
+          <div style="border:1px solid #374151;color:#9CA3AF;font-size:7px;padding:4px 6px;border-radius:3px;">TFLite ▾</div>
+          <div style="border-top:1px solid #1F2937;padding-top:6px;color:#6B7280;font-size:7px;padding:6px 6px 4px;">Recordings</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Config Drawer</h3>
+      <p>Hamburger opens a side panel for source, model, and nav. Bottom bar is just REC + Start/Stop. Most screen real estate while flying, but an extra tap to reconfigure.</p>
+    </div>
+  </div>
+
+</div>

@@ -1,0 +1,59 @@
+<h2>Design — Section 1: Model Selection on Launch</h2>
+<p class="subtitle">Appears every time the app opens. Full-screen modal, no way to dismiss without choosing.</p>
+
+<div class="split">
+
+  <div class="mockup">
+    <div class="mockup-header">Model Selection Screen</div>
+    <div class="mockup-body" style="background:#0A0A0A;padding:24px 20px;font-family:system-ui;min-height:340px;display:flex;flex-direction:column;justify-content:center;">
+
+      <!-- App name / header -->
+      <div style="text-align:center;margin-bottom:32px;">
+        <div style="color:#F97316;font-size:22px;font-weight:800;letter-spacing:2px;">DRONEEDGE</div>
+        <div style="color:#4B5563;font-size:11px;letter-spacing:1px;margin-top:4px;">SELECT DETECTION MODEL</div>
+      </div>
+
+      <!-- Options -->
+      <div style="display:flex;flex-direction:column;gap:10px;max-width:320px;margin:0 auto;width:100%;">
+
+        <div style="background:#161616;border:1px solid #374151;border-radius:8px;padding:16px;cursor:pointer;">
+          <div style="color:#E5E7EB;font-size:13px;font-weight:600;margin-bottom:4px;">Fake Detector</div>
+          <div style="color:#6B7280;font-size:11px;">Generates random bounding boxes. Use for UI testing without a model file.</div>
+        </div>
+
+        <div style="background:#1A1200;border:2px solid #F97316;border-radius:8px;padding:16px;cursor:pointer;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="color:#F97316;font-size:13px;font-weight:600;margin-bottom:4px;">TFLite — SSD MobileNet</div>
+              <div style="color:#9CA3AF;font-size:11px;">On-device object detection. Runs inference off the main thread.</div>
+            </div>
+            <div style="border:2px solid #F97316;width:16px;height:16px;border-radius:50%;background:#F97316;flex-shrink:0;margin-left:12px;"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Confirm -->
+      <div style="margin-top:28px;text-align:center;">
+        <div style="display:inline-block;background:#F97316;color:#000;font-size:13px;font-weight:700;padding:12px 40px;border-radius:6px;letter-spacing:0.5px;">CONFIRM</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Behaviour notes</div>
+    <div class="mockup-body" style="padding:16px;">
+      <ul style="color:#9CA3AF;font-size:12px;line-height:2;padding-left:16px;">
+        <li>Appears on every cold start before the Live Screen</li>
+        <li>Pre-selects the last used model (persisted via SharedPreferences)</li>
+        <li>No back / dismiss — user must pick one to proceed</li>
+        <li>TFLite option disabled + labelled "Model not found" if the .tflite asset is missing</li>
+        <li style="color:#6B7280;">Future: list grows as more model files are bundled</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<p style="color:#6B7280;font-size:12px;margin-top:16px;">Does this look right? Respond in the terminal to approve or request changes before we move to the Live Screen design.</p>

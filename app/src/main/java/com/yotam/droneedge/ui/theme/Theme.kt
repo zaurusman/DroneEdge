@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.theme
+package com.droneedge.app.ui.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme

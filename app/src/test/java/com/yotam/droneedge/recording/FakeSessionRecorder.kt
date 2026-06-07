@@ -1,8 +1,8 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
 import android.content.Context
-import com.yotam.droneedge.detection.Detection
-import com.yotam.droneedge.video.VideoFrame
+import com.droneedge.app.detection.Detection
+import com.droneedge.app.video.VideoFrame
 
 class FakeSessionRecorder : SessionRecorder {
     var startCalled = false

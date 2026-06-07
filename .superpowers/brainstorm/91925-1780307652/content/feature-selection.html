@@ -1,0 +1,56 @@
+<h2>DroneEdge — QoL Feature Selection</h2>
+<p class="subtitle">Pick the features you want to include in this sprint. Session naming is already confirmed — select any others you'd like to add.</p>
+
+<div class="options" data-multiselect>
+
+  <div class="option" data-choice="naming" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content">
+      <h3>Session naming</h3>
+      <p>Name a recording before or after capture. Default is date + time. Also rename existing sessions from the gallery.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="delete" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Delete recordings</h3>
+      <p>Long-press a gallery row to delete a recording (video + JSON). Confirmation dialog before delete.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="thumbnails" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Video thumbnails in gallery</h3>
+      <p>Show a small frame grab next to each recording row so you can visually identify sessions at a glance.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="timer" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Live recording timer</h3>
+      <p>While recording is armed, show a running elapsed time (e.g. "● REC 0:42") on the live screen HUD.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="detection-badge" onclick="toggleSelect(this)">
+    <div class="letter">D</div>
+    <div class="content">
+      <h3>Detection count in gallery</h3>
+      <p>Show how many detection events were logged during each session (read from the JSON sidecar).</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="share" onclick="toggleSelect(this)">
+    <div class="letter">E</div>
+    <div class="content">
+      <h3>Share / export recording</h3>
+      <p>Share button per gallery row to send the MP4 to another app (Files, Drive, etc.) via Android share sheet.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top: 24px;">Select as many as you'd like, then reply in the terminal.</p>

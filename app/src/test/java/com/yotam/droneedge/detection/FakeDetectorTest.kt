@@ -1,6 +1,6 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
-import com.yotam.droneedge.video.VideoFrame
+import com.droneedge.app.video.VideoFrame
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

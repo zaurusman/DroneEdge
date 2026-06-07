@@ -1,4 +1,4 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 /**
  * Parses the single-tensor output of YOLOv8 TFLite models.

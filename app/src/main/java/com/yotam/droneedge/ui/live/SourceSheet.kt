@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,12 +18,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yotam.droneedge.ui.theme.FieldAccent
-import com.yotam.droneedge.ui.theme.FieldBorder
-import com.yotam.droneedge.ui.theme.FieldSurfaceElevated
-import com.yotam.droneedge.ui.theme.FieldTextMuted
-import com.yotam.droneedge.ui.theme.FieldTextPrimary
-import com.yotam.droneedge.ui.theme.LocalAppStrings
+import com.droneedge.app.ui.theme.FieldAccent
+import com.droneedge.app.ui.theme.FieldBorder
+import com.droneedge.app.ui.theme.FieldSurfaceElevated
+import com.droneedge.app.ui.theme.FieldTextMuted
+import com.droneedge.app.ui.theme.FieldTextPrimary
+import com.droneedge.app.ui.theme.LocalAppStrings
 
 enum class SourceChoice { CAMERA, USB, FILE, DJI, FAKE }
 

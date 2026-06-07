@@ -1,4 +1,4 @@
-package com.yotam.droneedge.video
+package com.droneedge.app.video
 
 import java.io.ByteArrayOutputStream
 

@@ -1,4 +1,4 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 /**
  * Parses the 4-tensor output of SSD MobileNet V1 / V2 and EfficientDet-Lite models.

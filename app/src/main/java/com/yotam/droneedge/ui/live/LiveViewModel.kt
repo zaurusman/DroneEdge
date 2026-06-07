@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import android.app.Application
 import android.content.Context
@@ -8,22 +8,22 @@ import androidx.camera.core.CameraSelector
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewModelScope
-import com.yotam.droneedge.detection.Detection
-import com.yotam.droneedge.detection.Detector
-import com.yotam.droneedge.detection.FakeDetector
-import com.yotam.droneedge.detection.TfliteDetector
-import com.yotam.droneedge.recording.RecordingResult
-import com.yotam.droneedge.recording.SessionRecorder
-import com.yotam.droneedge.recording.VideoSessionRecorder
-import com.yotam.droneedge.recording.renameSession
-import com.yotam.droneedge.recording.sanitizeSessionName
-import com.yotam.droneedge.video.CameraVideoSource
-import com.yotam.droneedge.video.FakeVideoSource
-import com.yotam.droneedge.video.FileReplayVideoSource
-import com.yotam.droneedge.video.DjiGogglesVideoSource
-import com.yotam.droneedge.video.UsbUvcVideoSource
-import com.yotam.droneedge.video.VideoFrame
-import com.yotam.droneedge.video.VideoSource
+import com.droneedge.app.detection.Detection
+import com.droneedge.app.detection.Detector
+import com.droneedge.app.detection.FakeDetector
+import com.droneedge.app.detection.TfliteDetector
+import com.droneedge.app.recording.RecordingResult
+import com.droneedge.app.recording.SessionRecorder
+import com.droneedge.app.recording.VideoSessionRecorder
+import com.droneedge.app.recording.renameSession
+import com.droneedge.app.recording.sanitizeSessionName
+import com.droneedge.app.video.CameraVideoSource
+import com.droneedge.app.video.FakeVideoSource
+import com.droneedge.app.video.FileReplayVideoSource
+import com.droneedge.app.video.DjiGogglesVideoSource
+import com.droneedge.app.video.UsbUvcVideoSource
+import com.droneedge.app.video.VideoFrame
+import com.droneedge.app.video.VideoSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -242,6 +242,20 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     detector = tfd
                     _detectorMode.value = DetectorMode.TFLITE
                     _activeModelFile.value = modelFile
+                    _error.value = null
+                } catch (e: Exception) {
+                    _error.value = "TFLite load failed: ${e.message}"
+                }
+            }
+            DetectorMode.NORTH -> {
+                if (context == null) return
+                try {
+                    val tfd = TfliteDetector(context.applicationContext, modelFileName = "north_20260419.tflite")
+                    tfliteDetector?.close()
+                    tfliteDetector = tfd
+                    detector = tfd
+                    _detectorMode.value = DetectorMode.NORTH
+                    _activeModelFile.value = null
                     _error.value = null
                 } catch (e: Exception) {
                     _error.value = "TFLite load failed: ${e.message}"

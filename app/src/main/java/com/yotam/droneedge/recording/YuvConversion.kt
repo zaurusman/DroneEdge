@@ -1,4 +1,4 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
 import android.graphics.Bitmap
 import android.media.Image

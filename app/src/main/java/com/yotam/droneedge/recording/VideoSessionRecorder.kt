@@ -1,4 +1,4 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
 import android.content.ContentValues
 import android.content.Context
@@ -15,8 +15,8 @@ import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
-import com.yotam.droneedge.detection.Detection
-import com.yotam.droneedge.video.VideoFrame
+import com.droneedge.app.detection.Detection
+import com.droneedge.app.video.VideoFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

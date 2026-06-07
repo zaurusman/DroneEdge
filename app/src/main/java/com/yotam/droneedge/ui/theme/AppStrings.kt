@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.theme
+package com.droneedge.app.ui.theme
 
 import androidx.compose.runtime.staticCompositionLocalOf
 
@@ -54,8 +54,8 @@ class AppStrings(
             selectModel         = "בחר מודל זיהוי",
             confirm             = "אישור",
             modelNotFound       = { file -> "קובץ המודל '$file' לא נמצא בנכסים." },
-            externalModelDesc   = "מודל חיצוני — העתק קבצי .tflite ל-Android/data/com.yotam.droneedge/files/models/ דרך ADB",
-            externalModelHint   = "הוסף קבצי .tflite ל-Android/data/com.yotam.droneedge/files/models/ דרך ADB להוספת מודלים",
+            externalModelDesc   = "מודל חיצוני — העתק קבצי .tflite ל-Android/data/com.droneedge.app/files/models/ דרך ADB",
+            externalModelHint   = "הוסף קבצי .tflite ל-Android/data/com.droneedge.app/files/models/ דרך ADB להוספת מודלים",
             statusLabel         = "סטטוס",
             stateIdle           = "לא פעיל",
             stateRunning        = "פועל",
@@ -101,8 +101,8 @@ class AppStrings(
             selectModel         = "SELECT DETECTION MODEL",
             confirm             = "CONFIRM",
             modelNotFound       = { file -> "Model file '$file' not found in assets." },
-            externalModelDesc   = "External model — push .tflite files to Android/data/com.yotam.droneedge/files/models/ via ADB",
-            externalModelHint   = "Drop .tflite files into Android/data/com.yotam.droneedge/files/models/ via ADB to add custom models",
+            externalModelDesc   = "External model — push .tflite files to Android/data/com.droneedge.app/files/models/ via ADB",
+            externalModelHint   = "Drop .tflite files into Android/data/com.droneedge.app/files/models/ via ADB to add custom models",
             statusLabel         = "STATUS",
             stateIdle           = "IDLE",
             stateRunning        = "RUNNING",

@@ -1,10 +1,10 @@
-package com.yotam.droneedge.ui.recordings
+package com.droneedge.app.ui.recordings
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.yotam.droneedge.recording.renameSession
-import com.yotam.droneedge.recording.sanitizeSessionName
+import com.droneedge.app.recording.renameSession
+import com.droneedge.app.recording.sanitizeSessionName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

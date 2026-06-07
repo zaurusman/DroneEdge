@@ -1,7 +1,7 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
-import com.yotam.droneedge.detection.BoundingBox
-import com.yotam.droneedge.detection.Detection
+import com.droneedge.app.detection.BoundingBox
+import com.droneedge.app.detection.Detection
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.theme
+package com.droneedge.app.ui.theme
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals

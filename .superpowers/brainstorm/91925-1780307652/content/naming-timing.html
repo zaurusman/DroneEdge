@@ -1,0 +1,44 @@
+<h2>Session Naming — When does it happen?</h2>
+<p class="subtitle">The recording pipeline starts immediately on ARM. When should the user be able to set a name?</p>
+
+<div class="options">
+
+  <div class="option" data-choice="before" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Name before recording starts</h3>
+      <p>Tap REC → dialog appears with date/time pre-filled → user edits or accepts → recording starts.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pro</h4><ul><li>Name is set from the start</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>Adds friction — you might miss the moment</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="after" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Name after recording stops</h3>
+      <p>Recording starts immediately → user taps STOP → dialog appears pre-filled with date/time → user edits or accepts.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pro</h4><ul><li>Zero friction before capture; name in context of what just happened</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>One extra step after every session</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="gallery-only" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Auto-name always, rename from gallery</h3>
+      <p>Recording always saves as date/time. User can tap a name in the gallery to rename it later.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pro</h4><ul><li>No interruption to the recording flow at all</li></ul></div>
+        <div class="cons"><h4>Con</h4><ul><li>Easy to forget to rename; disconnected from the session</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:24px">Select one, then reply in the terminal.</p>

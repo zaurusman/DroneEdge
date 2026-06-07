@@ -1,4 +1,4 @@
-package com.yotam.droneedge
+package com.droneedge.app
 
 import android.content.Context
 import android.content.Intent
@@ -13,14 +13,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import com.yotam.droneedge.ui.live.DetectorMode
-import com.yotam.droneedge.ui.live.LiveScreen
-import com.yotam.droneedge.ui.live.LiveViewModel
-import com.yotam.droneedge.ui.live.ModelSelectionScreen
-import com.yotam.droneedge.ui.recordings.RecordingsScreen
-import com.yotam.droneedge.ui.theme.AppStrings
-import com.yotam.droneedge.ui.theme.DroneEdgeTheme
-import com.yotam.droneedge.ui.theme.LocalAppStrings
+import com.droneedge.app.ui.live.DetectorMode
+import com.droneedge.app.ui.live.LiveScreen
+import com.droneedge.app.ui.live.LiveViewModel
+import com.droneedge.app.ui.live.ModelSelectionScreen
+import com.droneedge.app.ui.recordings.RecordingsScreen
+import com.droneedge.app.ui.theme.AppStrings
+import com.droneedge.app.ui.theme.DroneEdgeTheme
+import com.droneedge.app.ui.theme.LocalAppStrings
 
 private const val PREFS_NAME      = "droneedge_prefs"
 private const val KEY_DETECTOR    = "detector_mode"
@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        getExternalFilesDir("models")?.mkdirs()
         intent?.let { vm.handleUsbLaunchIntent(it, this) }
         setContent {
             DroneEdgeTheme {

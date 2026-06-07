@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.recordings
+package com.droneedge.app.ui.recordings
 
 import android.content.ContentUris
 import android.content.Context
@@ -57,21 +57,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.view.LayoutInflater
-import com.yotam.droneedge.R
+import com.droneedge.app.R
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import com.yotam.droneedge.recording.loadDetectionFractions
-import com.yotam.droneedge.ui.theme.FieldAccent
-import com.yotam.droneedge.ui.theme.FieldBackground
-import com.yotam.droneedge.ui.theme.FieldBorder
-import com.yotam.droneedge.ui.theme.FieldSurface
-import com.yotam.droneedge.ui.theme.FieldTextMuted
-import com.yotam.droneedge.ui.theme.FieldTextPrimary
-import com.yotam.droneedge.ui.theme.FieldTextSecondary
-import com.yotam.droneedge.ui.theme.LocalAppStrings
+import com.droneedge.app.recording.loadDetectionFractions
+import com.droneedge.app.ui.theme.FieldAccent
+import com.droneedge.app.ui.theme.FieldBackground
+import com.droneedge.app.ui.theme.FieldBorder
+import com.droneedge.app.ui.theme.FieldSurface
+import com.droneedge.app.ui.theme.FieldTextMuted
+import com.droneedge.app.ui.theme.FieldTextPrimary
+import com.droneedge.app.ui.theme.FieldTextSecondary
+import com.droneedge.app.ui.theme.LocalAppStrings
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -463,7 +463,7 @@ internal fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
                 durationMs     = cursor.getLong(durCol),
                 dateMs         = cursor.getLong(dateCol) * 1000L,
                 thumbnail      = loadThumbnail(context, uri, id),
-                detectionCount = com.yotam.droneedge.recording.loadDetectionCount(context, sessionName),
+                detectionCount = com.droneedge.app.recording.loadDetectionCount(context, sessionName),
             )
         }
     }

@@ -1,4 +1,4 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 /**
  * Normalized bounding box in [0, 1] relative to frame dimensions.

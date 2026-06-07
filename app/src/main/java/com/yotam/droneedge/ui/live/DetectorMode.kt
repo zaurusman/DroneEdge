@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import android.content.res.AssetManager
 
@@ -6,6 +6,7 @@ enum class DetectorMode {
     NO_MODEL,
     FAKE,
     TFLITE,
+    NORTH,
     // To add a new model:
     // 1. Add an enum value here
     // 2. Add a ModelDescriptor entry in ModelRegistry.all below
@@ -47,6 +48,13 @@ object ModelRegistry {
             shortLabel  = "TFLite",
             description = "On-device object detection. Runs inference off the main thread.",
             assetFile   = "detect.tflite",
+        ),
+        ModelDescriptor(
+            mode        = DetectorMode.NORTH,
+            displayName = "North — Custom Model",
+            shortLabel  = "North",
+            description = "Custom bundled model (north_20260419.tflite).",
+            assetFile   = "north_20260419.tflite",
         ),
     )
 }

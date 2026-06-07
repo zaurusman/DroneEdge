@@ -1,6 +1,6 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
-import com.yotam.droneedge.detection.Detection
+import com.droneedge.app.detection.Detection
 
 data class DetectionEvent(
     val frameIndex: Long,

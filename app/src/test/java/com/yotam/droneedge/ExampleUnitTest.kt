@@ -1,4 +1,4 @@
-package com.yotam.droneedge
+package com.droneedge.app
 
 import org.junit.Test
 

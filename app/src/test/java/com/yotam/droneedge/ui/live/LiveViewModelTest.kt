@@ -1,8 +1,8 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import android.app.Application
-import com.yotam.droneedge.recording.FakeSessionRecorder
-import com.yotam.droneedge.recording.RecordingResult
+import com.droneedge.app.recording.FakeSessionRecorder
+import com.droneedge.app.recording.RecordingResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher

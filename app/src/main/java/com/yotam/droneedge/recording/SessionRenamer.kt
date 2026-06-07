@@ -1,4 +1,4 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
 import android.content.ContentValues
 import android.content.Context

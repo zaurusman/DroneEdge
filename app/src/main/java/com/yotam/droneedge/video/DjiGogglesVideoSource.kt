@@ -1,4 +1,4 @@
-package com.yotam.droneedge.video
+package com.droneedge.app.video
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -14,7 +14,7 @@ import android.hardware.usb.UsbManager
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
-import com.yotam.droneedge.BuildConfig
+import com.droneedge.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow

@@ -1,8 +1,8 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.yotam.droneedge.video.VideoFrame
+import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import java.io.Closeable

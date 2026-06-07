@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 enum class RecordingState {
     IDLE,

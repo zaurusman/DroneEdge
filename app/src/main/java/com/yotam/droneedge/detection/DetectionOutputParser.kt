@@ -1,4 +1,4 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 /**
  * Converts the raw output tensors of a TFLite detection model into [Detection] objects.

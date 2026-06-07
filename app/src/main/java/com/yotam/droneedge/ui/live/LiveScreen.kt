@@ -1,4 +1,4 @@
-package com.yotam.droneedge.ui.live
+package com.droneedge.app.ui.live
 
 import android.Manifest
 import android.app.PendingIntent
@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -75,21 +76,21 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import com.yotam.droneedge.detection.Detection
-import com.yotam.droneedge.ui.theme.FieldAccent
-import com.yotam.droneedge.ui.theme.FieldBackground
-import com.yotam.droneedge.ui.theme.LocalAppStrings
-import com.yotam.droneedge.ui.theme.FieldBorder
-import com.yotam.droneedge.ui.theme.FieldRecRed
-import com.yotam.droneedge.ui.theme.FieldRecRedLight
-import com.yotam.droneedge.ui.theme.FieldSurface
-import com.yotam.droneedge.ui.theme.FieldTextMuted
-import com.yotam.droneedge.ui.theme.FieldTextPrimary
-import com.yotam.droneedge.ui.theme.FieldTextSecondary
-import com.yotam.droneedge.video.VideoFrame
-import com.yotam.droneedge.video.DjiGogglesVideoSource
+import com.droneedge.app.detection.Detection
+import com.droneedge.app.ui.theme.FieldAccent
+import com.droneedge.app.ui.theme.FieldBackground
+import com.droneedge.app.ui.theme.LocalAppStrings
+import com.droneedge.app.ui.theme.FieldBorder
+import com.droneedge.app.ui.theme.FieldRecRed
+import com.droneedge.app.ui.theme.FieldRecRedLight
+import com.droneedge.app.ui.theme.FieldSurface
+import com.droneedge.app.ui.theme.FieldTextMuted
+import com.droneedge.app.ui.theme.FieldTextPrimary
+import com.droneedge.app.ui.theme.FieldTextSecondary
+import com.droneedge.app.video.VideoFrame
+import com.droneedge.app.video.DjiGogglesVideoSource
 
-private const val ACTION_USB_PERMISSION = "com.yotam.droneedge.USB_PERMISSION"
+private const val ACTION_USB_PERMISSION = "com.droneedge.app.USB_PERMISSION"
 private const val DJI_VENDOR_ID = DjiGogglesVideoSource.VENDOR_ID
 
 @Composable
@@ -457,6 +458,7 @@ private fun BottomBar(
     Row(
         modifier              = modifier
             .background(Color(0xEE111111))
+            .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

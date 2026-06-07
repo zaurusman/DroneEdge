@@ -1,0 +1,100 @@
+<h2>Source Selection — How should it work?</h2>
+<p class="subtitle">The current 4-button row will grow to 5 with DJI. How do we handle it?</p>
+
+<div class="cards">
+
+  <!-- Option A: Bottom Sheet / Dropdown -->
+  <div class="card" data-choice="sheet" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <!-- Normal state: single button -->
+      <div style="margin-bottom:8px;">
+        <div style="color:#6B7280;font-size:8px;margin-bottom:4px;">Normal state:</div>
+        <div style="background:#1A1A1A;border-radius:8px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;gap:6px;">
+            <div style="border:1px solid #374151;color:#9CA3AF;font-size:9px;padding:5px 10px;border-radius:4px;">📷 Camera ⌄</div>
+          </div>
+          <div style="background:#F97316;color:#fff;font-size:9px;padding:5px 12px;border-radius:4px;font-weight:700;">■ STOP</div>
+        </div>
+      </div>
+      <!-- Sheet open state -->
+      <div>
+        <div style="color:#6B7280;font-size:8px;margin-bottom:4px;">Sheet open:</div>
+        <div style="background:#1A1A1A;border-radius:8px;padding:8px;">
+          <div style="color:#9CA3AF;font-size:8px;margin-bottom:6px;text-align:center;letter-spacing:1px;">SELECT SOURCE</div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <div style="background:#F9731622;border:1px solid #F97316;color:#F97316;font-size:8px;padding:5px 10px;border-radius:4px;">✓ Camera (back)</div>
+            <div style="background:#0A0A0A;border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:5px 10px;border-radius:4px;">USB / UVC</div>
+            <div style="background:#0A0A0A;border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:5px 10px;border-radius:4px;">Video File</div>
+            <div style="background:#0A0A0A;border:1px solid #374151;color:#6B7280;font-size:8px;padding:5px 10px;border-radius:4px;">DJI Goggles <span style="color:#4B5563;">coming soon</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Source Sheet</h3>
+      <p>One "Source" button opens a list. Scales to any number of sources. Active source shown on button label. Large tap targets.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Icon strip -->
+  <div class="card" data-choice="icon-strip" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <div style="background:#1A1A1A;border-radius:8px;padding:8px 12px;">
+        <div style="color:#6B7280;font-size:7px;letter-spacing:1px;margin-bottom:6px;">SOURCE</div>
+        <div style="display:flex;gap:6px;justify-content:center;margin-bottom:10px;">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <div style="background:#F9731622;border:2px solid #F97316;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;">📷</div>
+            <div style="color:#F97316;font-size:7px;">Camera</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <div style="background:#1F1F1F;border:1px solid #374151;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;">🔌</div>
+            <div style="color:#6B7280;font-size:7px;">USB</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <div style="background:#1F1F1F;border:1px solid #374151;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;">🎬</div>
+            <div style="color:#6B7280;font-size:7px;">File</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+            <div style="background:#111;border:1px solid #1F2937;width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;opacity:0.4;">🥽</div>
+            <div style="color:#374151;font-size:7px;">DJI</div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;">
+          <div style="background:#F97316;color:#fff;font-size:9px;padding:5px 12px;border-radius:4px;font-weight:700;">■ STOP</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Icon Strip</h3>
+      <p>All sources visible at once as icon tiles. Active source highlighted. Direct one-tap switching. Gets crowded at 5+.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Two-zone bottom bar -->
+  <div class="card" data-choice="two-zone" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#0A0A0A;padding:16px;font-family:system-ui;">
+      <div style="background:#1A1A1A;border-radius:8px;overflow:hidden;">
+        <!-- Top zone: source + detector -->
+        <div style="padding:8px 10px;border-bottom:1px solid #1F2937;display:flex;gap:6px;align-items:center;">
+          <div style="color:#6B7280;font-size:7px;letter-spacing:1px;flex-shrink:0;">SETUP</div>
+          <div style="background:#F9731622;border:1px solid #F97316;color:#F97316;font-size:8px;padding:3px 8px;border-radius:4px;">📷 Camera ⌄</div>
+          <div style="background:#0A0A0A;border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:3px 8px;border-radius:4px;">TFLite ⌄</div>
+          <div style="margin-left:auto;background:#0A0A0A;border:1px solid #374151;color:#9CA3AF;font-size:8px;padding:3px 8px;border-radius:4px;">Recordings</div>
+        </div>
+        <!-- Bottom zone: session control -->
+        <div style="padding:8px 10px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="color:#6B7280;font-size:7px;letter-spacing:1px;">SESSION</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="background:#D3212322;border:1px solid #D32123;color:#ff6b6b;font-size:9px;padding:5px 10px;border-radius:4px;font-weight:600;">● REC</div>
+            <div style="background:#F97316;color:#fff;font-size:9px;padding:5px 14px;border-radius:4px;font-weight:700;">■ STOP</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Two-zone Bar</h3>
+      <p>Setup row (source + detector + nav) sits above a session row (REC + Start/Stop). Clear separation of config vs action.</p>
+    </div>
+  </div>
+
+</div>

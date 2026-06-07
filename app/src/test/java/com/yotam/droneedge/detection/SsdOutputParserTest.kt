@@ -1,4 +1,4 @@
-package com.yotam.droneedge.detection
+package com.droneedge.app.detection
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

@@ -1,4 +1,4 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

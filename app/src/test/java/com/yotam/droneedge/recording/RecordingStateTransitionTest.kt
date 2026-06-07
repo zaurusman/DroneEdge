@@ -1,9 +1,9 @@
-package com.yotam.droneedge.recording
+package com.droneedge.app.recording
 
-import com.yotam.droneedge.ui.live.RecordingState
-import com.yotam.droneedge.ui.live.SessionState
-import com.yotam.droneedge.ui.live.canArm
-import com.yotam.droneedge.ui.live.canDisarm
+import com.droneedge.app.ui.live.RecordingState
+import com.droneedge.app.ui.live.SessionState
+import com.droneedge.app.ui.live.canArm
+import com.droneedge.app.ui.live.canDisarm
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
