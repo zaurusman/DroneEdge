@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         ensurePublicDirs()
+        dumpUsbDevices()
         if (!Environment.isExternalStorageManager()) {
             startActivity(
                 Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -128,6 +129,33 @@ class MainActivity : ComponentActivity() {
     private fun ensurePublicDirs() {
         droneEdgeModelsDir().mkdirs()
         droneEdgeLogsDir().mkdirs()
+    }
+
+    private fun dumpUsbDevices() {
+        runCatching {
+            val usbManager = getSystemService(USB_SERVICE) as android.hardware.usb.UsbManager
+            val sb = StringBuilder()
+            sb.appendLine("=== USB device dump ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} ===")
+            val devices = usbManager.deviceList
+            if (devices.isEmpty()) {
+                sb.appendLine("No USB devices found in deviceList.")
+            } else {
+                devices.values.forEach { dev ->
+                    sb.appendLine("Device: ${dev.deviceName}")
+                    sb.appendLine("  vendorId  = 0x%04x (%d)".format(dev.vendorId, dev.vendorId))
+                    sb.appendLine("  productId = 0x%04x (%d)".format(dev.productId, dev.productId))
+                    sb.appendLine("  class     = 0x%02x  subclass = 0x%02x".format(dev.deviceClass, dev.deviceSubclass))
+                    sb.appendLine("  interfaces= ${dev.interfaceCount}")
+                    for (i in 0 until dev.interfaceCount) {
+                        val iface = dev.getInterface(i)
+                        sb.appendLine("    iface[$i] class=0x%02x sub=0x%02x endpoints=${iface.endpointCount}".format(iface.interfaceClass, iface.interfaceSubclass))
+                    }
+                    sb.appendLine("  hasPermission = ${usbManager.hasPermission(dev)}")
+                    sb.appendLine()
+                }
+            }
+            File(droneEdgeLogsDir(), "usb_devices.txt").writeText(sb.toString())
+        }
     }
 
     companion object {
