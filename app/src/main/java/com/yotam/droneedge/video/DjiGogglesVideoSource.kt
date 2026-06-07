@@ -44,6 +44,7 @@ class DjiGogglesVideoSource(
 
     override val frames: Flow<VideoFrame> = flow {
         val log = openLogWriter(context)
+        Log.i(TAG, "DJI log → ${logFilePath(context)}")
         val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         log?.appendLine("=== DroneEdge DJI session $ts ===")
         log?.appendLine("device: ${device.deviceName}  vendorId=0x%04x  productId=0x%04x"
@@ -270,12 +271,26 @@ class DjiGogglesVideoSource(
         const val VIDEO_CMD_SET = 0x09
         const val VIDEO_CMD_ID  = 0x00
 
-        fun openLogWriter(context: Context): BufferedWriter? = runCatching {
-            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
-            BufferedWriter(FileWriter(File(dir, "dji_duml_log.txt"), false))
-        }.getOrNull()
+        fun openLogWriter(context: Context): BufferedWriter? {
+            // Try public Documents/DroneEdge/logs/ first (visible in Files app).
+            // Fall back to app-private storage if MANAGE_EXTERNAL_STORAGE wasn't granted.
+            val publicDir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
+            val file = if (runCatching { publicDir.mkdirs(); publicDir.canWrite() }.getOrDefault(false)) {
+                File(publicDir, "dji_duml_log.txt")
+            } else {
+                File(context.getExternalFilesDir("logs").also { it?.mkdirs() }, "dji_duml_log.txt")
+            }
+            return runCatching { BufferedWriter(FileWriter(file, false)) }
+                .onFailure { Log.e(TAG, "Cannot open log file: ${it.message}") }
+                .getOrNull()
+        }
 
-        fun logFilePath(): String =
-            File(com.droneedge.app.MainActivity.droneEdgeLogsDir(), "dji_duml_log.txt").absolutePath
+        fun logFilePath(context: Context): String {
+            val publicDir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
+            return if (runCatching { publicDir.canWrite() }.getOrDefault(false))
+                File(publicDir, "dji_duml_log.txt").absolutePath
+            else
+                File(context.getExternalFilesDir("logs"), "dji_duml_log.txt").absolutePath
+        }
     }
 }
