@@ -3,6 +3,7 @@ package com.yotam.droneedge.ui.live
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -181,7 +182,7 @@ private fun LanguageToggle(
     onLanguageChange: (String) -> Unit,
     modifier:         Modifier = Modifier,
 ) {
-    Row(modifier = modifier) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         listOf("EN", "HE").forEach { code ->
             val active = currentLanguage == code
             Text(
@@ -196,10 +197,9 @@ private fun LanguageToggle(
                         color = if (active) FieldAccent else FieldBorder,
                         shape = RoundedCornerShape(4.dp),
                     )
-                    .clickable { onLanguageChange(code) }
+                    .clickable(enabled = !active) { onLanguageChange(code) }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
-            if (code == "EN") Spacer(Modifier.size(4.dp))
         }
     }
 }
