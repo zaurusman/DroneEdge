@@ -2,6 +2,9 @@ package com.droneedge.app.detection
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
@@ -38,6 +41,15 @@ class TfliteDetector(
     private val inputDataType: DataType
     private val outputParser: DetectionOutputParser
 
+    // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
+    private val inputBuffer: ByteBuffer
+    private val pixels: IntArray
+    private val scaledBitmap: Bitmap
+    private val scalingCanvas: Canvas
+    private val scalingPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val srcRect = Rect()
+    private val dstRect = Rect()
+
     init {
         val model = if (modelFile != null) loadModelFromFile(modelFile)
                     else loadModelFile(context, modelFileName)
@@ -61,12 +73,20 @@ class TfliteDetector(
         } else {
             SsdOutputParser()
         }
+
+        val bytesPerChannel = if (inputDataType == DataType.FLOAT32) 4 else 1
+        inputBuffer  = ByteBuffer.allocateDirect(inputWidth * inputHeight * 3 * bytesPerChannel)
+            .apply { order(ByteOrder.nativeOrder()) }
+        pixels       = IntArray(inputWidth * inputHeight)
+        scaledBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
+        scalingCanvas = Canvas(scaledBitmap)
+        dstRect.set(0, 0, inputWidth, inputHeight)
     }
 
     override suspend fun detect(frame: VideoFrame): List<Detection> {
         val bitmap = frame.bitmap ?: return emptyList()
 
-        val inputBuffer = bitmapToByteBuffer(bitmap, inputWidth, inputHeight, inputDataType)
+        fillInputBuffer(bitmap)
         val outputs = outputParser.allocateOutputs(maxDetections = 10)
         val outputMap = HashMap<Int, Any>(outputs.size).also { map ->
             outputs.forEachIndexed { i, o -> map[i] = o }
@@ -77,7 +97,10 @@ class TfliteDetector(
         return outputParser.parse(outputs, labels, confidenceThreshold)
     }
 
-    override fun close() = interpreter.close()
+    override fun close() {
+        interpreter.close()
+        scaledBitmap.recycle()
+    }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
@@ -105,33 +128,27 @@ class TfliteDetector(
         return context.assets.open(fallbackFileName).bufferedReader().readLines()
     }
 
-    /**
-     * Scale [bitmap] to [width]×[height] and pack RGB pixels into a direct [ByteBuffer].
-     * UINT8 models get raw byte values (0–255); FLOAT32 models get normalized floats (0.0–1.0).
-     */
-    private fun bitmapToByteBuffer(bitmap: Bitmap, width: Int, height: Int, dataType: DataType): ByteBuffer {
-        val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
-        val bytesPerChannel = if (dataType == DataType.FLOAT32) 4 else 1
-        val buffer = ByteBuffer.allocateDirect(width * height * 3 * bytesPerChannel).apply {
-            order(ByteOrder.nativeOrder())
-        }
-        val pixels = IntArray(width * height)
-        scaled.getPixels(pixels, 0, width, 0, 0, width, height)
+    // Scales [bitmap] into the pre-allocated scaledBitmap and packs pixels into inputBuffer.
+    // Zero heap allocations on the hot inference path.
+    private fun fillInputBuffer(bitmap: Bitmap) {
+        srcRect.set(0, 0, bitmap.width, bitmap.height)
+        scalingCanvas.drawBitmap(bitmap, srcRect, dstRect, scalingPaint)
+        scaledBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
+        inputBuffer.rewind()
         for (pixel in pixels) {
             val r = (pixel shr 16) and 0xFF
             val g = (pixel shr 8)  and 0xFF
             val b =  pixel         and 0xFF
-            if (dataType == DataType.FLOAT32) {
-                buffer.putFloat(r / 255f)
-                buffer.putFloat(g / 255f)
-                buffer.putFloat(b / 255f)
+            if (inputDataType == DataType.FLOAT32) {
+                inputBuffer.putFloat(r / 255f)
+                inputBuffer.putFloat(g / 255f)
+                inputBuffer.putFloat(b / 255f)
             } else {
-                buffer.put(r.toByte())
-                buffer.put(g.toByte())
-                buffer.put(b.toByte())
+                inputBuffer.put(r.toByte())
+                inputBuffer.put(g.toByte())
+                inputBuffer.put(b.toByte())
             }
         }
-        buffer.rewind()
-        return buffer
+        inputBuffer.rewind()
     }
 }

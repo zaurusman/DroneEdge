@@ -144,19 +144,27 @@ class VideoSessionRecorder : SessionRecorder {
                     Bitmap.createScaledBitmap(annotated, encodedWidth, encodedHeight, true)
                 }
 
-                // I420 planar — matches COLOR_FormatYUV420Flexible layout used by getInputBuffer()
-                val yuv = bitmapToI420(scaled)
-                if (scaled !== annotated) scaled.recycle()
-                annotated.recycle()
-
                 val inputIdx = enc.dequeueInputBuffer(10_000L)
                 if (inputIdx >= 0) {
-                    val buf = enc.getInputBuffer(inputIdx)!!
-                    buf.clear()
-                    buf.put(yuv)
                     val ptsUs = (frame.timestampMs - firstTimestampMs) * 1_000L
-                    enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    // Prefer getInputImage() — it exposes actual plane strides so rows are
+                    // written to the right offsets in hardware encoders. Fall back to raw
+                    // ByteBuffer (software encoder path) if the image API is unavailable.
+                    val image = enc.getInputImage(inputIdx)
+                    if (image != null) {
+                        val nv12 = bitmapToNv12(scaled)
+                        writeNv12ToImage(nv12, image, encodedWidth, encodedHeight)
+                        enc.queueInputBuffer(inputIdx, 0, 0, ptsUs, 0)
+                    } else {
+                        val yuv = bitmapToI420(scaled)
+                        val buf = enc.getInputBuffer(inputIdx)!!
+                        buf.clear()
+                        buf.put(yuv)
+                        enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    }
                 }
+                if (scaled !== annotated) scaled.recycle()
+                annotated.recycle()
 
                 drainEncoder(endOfStream = false)
 
