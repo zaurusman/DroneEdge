@@ -1,6 +1,6 @@
 package com.yotam.droneedge.ui.theme
 
-import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.staticCompositionLocalOf
 
 class AppStrings(
     val code:                String,
@@ -67,7 +67,7 @@ class AppStrings(
             start               = "התחל",
             stop                = "עצור",
             rec                 = "הקלט",
-            saving              = "שומר...",
+            saving              = "שומר…",
             dismiss             = "סגור",
             savedTo             = "נשמר ב-Movies/DroneEdge/",
             nameRecordingTitle  = "שם ההקלטה",
@@ -145,4 +145,4 @@ class AppStrings(
     }
 }
 
-val LocalAppStrings = compositionLocalOf { AppStrings.Hebrew }
+val LocalAppStrings = staticCompositionLocalOf { AppStrings.Hebrew }

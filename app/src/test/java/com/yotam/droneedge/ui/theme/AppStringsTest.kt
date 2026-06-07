@@ -10,6 +10,7 @@ class AppStringsTest {
     @Test
     fun `Hebrew instance has no blank String fields`() {
         val s = AppStrings.Hebrew
+        assertFalse("code",               s.code.isBlank())
         assertFalse("selectModel",        s.selectModel.isBlank())
         assertFalse("confirm",            s.confirm.isBlank())
         assertFalse("externalModelDesc",  s.externalModelDesc.isBlank())
@@ -59,6 +60,7 @@ class AppStringsTest {
     @Test
     fun `English instance has no blank String fields`() {
         val s = AppStrings.English
+        assertFalse("code",               s.code.isBlank())
         assertFalse("selectModel",        s.selectModel.isBlank())
         assertFalse("confirm",            s.confirm.isBlank())
         assertFalse("externalModelDesc",  s.externalModelDesc.isBlank())
