@@ -135,6 +135,27 @@ fun LiveScreen(
         }
     }
 
+    // Detect USB devices already connected when LiveScreen first appears.
+    // ACTION_USB_DEVICE_ATTACHED fires only once; if it arrived before this
+    // screen was visible the BroadcastReceiver missed it.
+    LaunchedEffect(Unit) {
+        if (sessionState != SessionState.IDLE) return@LaunchedEffect
+        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+        val permIntent = PendingIntent.getBroadcast(
+            context, 0,
+            Intent(ACTION_USB_PERMISSION),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        usbManager.deviceList.values.forEach { device ->
+            if (usbManager.hasPermission(device)) {
+                if (device.vendorId == DJI_VENDOR_ID) vm.useDjiSource(device, context)
+                else vm.useUsbSource(device, context)
+            } else {
+                usbManager.requestPermission(device, permIntent)
+            }
+        }
+    }
+
     val view = androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(sessionState) {
         view.keepScreenOn = sessionState == SessionState.RUNNING
@@ -314,12 +335,27 @@ fun LiveScreen(
             )
         }
 
-        // ── Error snackbar ────────────────────────────────────────────────────
+        // ── Bottom bar ────────────────────────────────────────────────────────
+        BottomBar(
+            modifier       = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            sessionState   = sessionState,
+            recordingState = recordingState,
+            elapsedMs      = recordingElapsed,
+            sourceLabel    = sourceLabel,
+            onSourceClick  = { showSourceSheet = true },
+            onGallery      = onGallery,
+            onStart        = { vm.start() },
+            onStop         = { vm.stop() },
+            onArmRecording = { vm.armRecording() },
+        )
+
+        // ── Error snackbar (after BottomBar so it renders on top) ────────────
         if (error != null) {
             Snackbar(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
+                    .navigationBarsPadding()
+                    .padding(bottom = 72.dp, start = 16.dp, end = 16.dp),
                 action = {
                     TextButton(onClick = { vm.clearError() }) { Text(strings.dismiss) }
                 },
@@ -337,7 +373,8 @@ fun LiveScreen(
             Snackbar(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
+                    .navigationBarsPadding()
+                    .padding(bottom = 72.dp, start = 16.dp, end = 16.dp),
                 action = {
                     TextButton(onClick = { vm.clearLastRecording() }) { Text(strings.dismiss) }
                 },
@@ -345,20 +382,6 @@ fun LiveScreen(
                 contentColor   = FieldTextSecondary,
             ) { Text(strings.savedTo) }
         }
-
-        // ── Bottom bar ────────────────────────────────────────────────────────
-        BottomBar(
-            modifier       = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-            sessionState   = sessionState,
-            recordingState = recordingState,
-            elapsedMs      = recordingElapsed,
-            sourceLabel    = sourceLabel,
-            onSourceClick  = { showSourceSheet = true },
-            onGallery      = onGallery,
-            onStart        = { vm.start() },
-            onStop         = { vm.stop() },
-            onArmRecording = { vm.armRecording() },
-        )
 
         // ── Sheets ────────────────────────────────────────────────────────────
         if (showSourceSheet) {

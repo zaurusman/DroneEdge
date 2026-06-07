@@ -205,6 +205,15 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (usbManager.hasPermission(device)) {
             if (device.vendorId == DjiGogglesVideoSource.VENDOR_ID) useDjiSource(device, context)
             else useUsbSource(device, context)
+        } else {
+            // App launched by USB_DEVICE_ATTACHED but permission not yet granted — request it.
+            // The result is delivered to LiveScreen's BroadcastReceiver once the user responds.
+            val permIntent = android.app.PendingIntent.getBroadcast(
+                context, 0,
+                android.content.Intent("${context.packageName}.USB_PERMISSION"),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            usbManager.requestPermission(device, permIntent)
         }
     }
 
