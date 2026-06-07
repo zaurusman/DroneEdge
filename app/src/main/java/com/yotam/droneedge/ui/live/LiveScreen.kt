@@ -91,7 +91,8 @@ import com.droneedge.app.video.VideoFrame
 import com.droneedge.app.video.DjiGogglesVideoSource
 
 private const val ACTION_USB_PERMISSION = "com.droneedge.app.USB_PERMISSION"
-private const val DJI_VENDOR_ID = DjiGogglesVideoSource.VENDOR_ID
+private const val DJI_VENDOR_ID  = DjiGogglesVideoSource.VENDOR_ID
+private const val DJI_PRODUCT_ID = DjiGogglesVideoSource.PRODUCT_ID
 
 @Composable
 fun LiveScreen(
@@ -148,7 +149,7 @@ fun LiveScreen(
         )
         usbManager.deviceList.values.forEach { device ->
             if (usbManager.hasPermission(device)) {
-                if (device.vendorId == DJI_VENDOR_ID) vm.useDjiSource(device, context)
+                if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) vm.useDjiSource(device, context)
                 else vm.useUsbSource(device, context)
             } else {
                 usbManager.requestPermission(device, permIntent)
@@ -198,7 +199,7 @@ fun LiveScreen(
                 } ?: return
                 when (intent.action) {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                        if (device.vendorId == DJI_VENDOR_ID) {
+                        if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) {
                             if (usbManager.hasPermission(device)) vm.useDjiSource(device, ctx)
                             else usbManager.requestPermission(device, permIntent)
                         } else {
@@ -209,12 +210,12 @@ fun LiveScreen(
                     ACTION_USB_PERMISSION -> {
                         val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                         if (granted) {
-                            if (device.vendorId == DJI_VENDOR_ID) vm.useDjiSource(device, ctx)
+                            if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) vm.useDjiSource(device, ctx)
                             else vm.useUsbSource(device, ctx)
                         }
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                        if (device.vendorId == DJI_VENDOR_ID) {
+                        if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) {
                             vm.reportError(currentStrings.djiDisconnected)
                             vm.clearDjiSource()
                         } else {
@@ -425,7 +426,7 @@ fun LiveScreen(
                         SourceChoice.DJI -> {
                             val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
                             val djiDev = usbManager.deviceList.values.firstOrNull { dev ->
-                                dev.vendorId == DJI_VENDOR_ID
+                                dev.vendorId == DJI_VENDOR_ID && dev.productId == DJI_PRODUCT_ID
                             }
                             when {
                                 djiDev == null ->

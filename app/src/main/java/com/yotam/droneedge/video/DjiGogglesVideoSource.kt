@@ -6,20 +6,16 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
-import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbEndpoint
-import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
-import com.droneedge.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -29,6 +25,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Streams H.264 video from DJI Goggles 2 / Integra via USB.
+ *
+ * Protocol discovered by the voc-poc / DigiView-Android community projects:
+ *   - Claim interface 3 on the device (vendor 0x2CA3, product 0x001F)
+ *   - Send "RMVT" (4 bytes) to bulk-out endpoint 0 to start the stream
+ *   - Read raw H.264 elementary stream from bulk-in endpoint 1
+ *   - Resend "RMVT" whenever a read returns empty to recover the stream
+ */
 class DjiGogglesVideoSource(
     private val context: Context,
     val device: UsbDevice,
@@ -39,36 +44,53 @@ class DjiGogglesVideoSource(
     @Volatile override var height: Int = 720
         private set
 
-    @Volatile private var running = false
-    @Volatile private var frameIndex = 0L
+    @Volatile private var running     = false
+    @Volatile private var frameIndex  = 0L
 
     override val frames: Flow<VideoFrame> = flow {
         val log = openLogWriter(context)
-        Log.i(TAG, "DJI log → ${logFilePath(context)}")
-        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
-        log?.appendLine("=== DroneEdge DJI session $ts ===")
-        log?.appendLine("device: ${device.deviceName}  vendorId=0x%04x  productId=0x%04x"
+        log?.println("=== DjiGogglesVideoSource session ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())} ===")
+        log?.println("device: ${device.deviceName}  vendor=0x%04x  product=0x%04x  interfaces=${device.interfaceCount}"
             .format(device.vendorId, device.productId))
-        log?.appendLine("interfaceCount=${device.interfaceCount}")
-        for (i in 0 until device.interfaceCount) {
-            val iface = device.getInterface(i)
-            log?.appendLine("  iface[$i] class=0x%02x sub=0x%02x proto=0x%02x endpoints=${iface.endpointCount}"
-                .format(iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol))
-        }
 
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val info = findBulkInterface(device)
-        if (info == null) {
-            log?.appendLine("ERROR: no bulk interface found — aborting")
-            log?.flush(); log?.close()
-            error("DJI device connected but no streaming interface found")
-        }
         val connection = usbManager.openDevice(device)
         if (connection == null) {
-            log?.appendLine("ERROR: openDevice returned null (permission denied?)")
-            log?.flush(); log?.close()
+            log?.println("ERROR: openDevice returned null — permission denied?")
+            log?.close()
             error("USB permission denied for DJI Goggles")
         }
+
+        if (device.interfaceCount <= INTERFACE_INDEX) {
+            log?.println("ERROR: device only has ${device.interfaceCount} interfaces, need ${INTERFACE_INDEX + 1}")
+            connection.close(); log?.close()
+            error("DJI Goggles interface $INTERFACE_INDEX not found (only ${device.interfaceCount} interfaces)")
+        }
+
+        val iface = device.getInterface(INTERFACE_INDEX)
+        log?.println("interface $INTERFACE_INDEX: class=0x%02x sub=0x%02x endpoints=${iface.endpointCount}"
+            .format(iface.interfaceClass, iface.interfaceSubclass))
+
+        val claimed = connection.claimInterface(iface, true)
+        log?.println("claimInterface: $claimed")
+        if (!claimed) {
+            connection.close(); log?.close()
+            error("Cannot claim DJI Goggles interface $INTERFACE_INDEX")
+        }
+
+        if (iface.endpointCount < 2) {
+            log?.println("ERROR: interface has only ${iface.endpointCount} endpoints, need 2")
+            connection.releaseInterface(iface); connection.close(); log?.close()
+            error("DJI Goggles interface has insufficient endpoints")
+        }
+
+        val epOut = iface.getEndpoint(BULK_OUT_ENDPOINT_IDX)
+        val epIn  = iface.getEndpoint(BULK_IN_ENDPOINT_IDX)
+        log?.println("epOut dir=${epOut.direction}  epIn dir=${epIn.direction}")
+
+        // Send the magic packet to start the H.264 stream.
+        val sent = connection.bulkTransfer(epOut, MAGIC_PACKET, MAGIC_PACKET.size, WRITE_TIMEOUT_MS)
+        log?.println("RMVT magic packet sent: $sent bytes")
 
         val codec = try {
             MediaCodec.createDecoderByType("video/avc").also { c ->
@@ -77,54 +99,47 @@ class DjiGogglesVideoSource(
                 c.start()
             }
         } catch (e: Exception) {
-            log?.appendLine("ERROR: H.264 decoder init failed: ${e.message}")
-            log?.flush(); log?.close()
-            connection.close()
+            log?.println("ERROR: H.264 decoder init failed: ${e.message}")
+            log?.close()
+            connection.releaseInterface(iface); connection.close()
             error("Could not initialise H.264 decoder")
         }
 
+        val readBuf = ByteArray(READ_BUFFER_SIZE)
+        val bufInfo = MediaCodec.BufferInfo()
+        var totalPackets = 0
+        var emptyReads   = 0
+
         try {
-            val claimed = connection.claimInterface(info.iface, true)
-            log?.appendLine("claimInterface(${info.ifaceNumber}): $claimed")
-            check(claimed) { "Cannot claim DJI streaming interface" }
-            log?.appendLine("sending startup sequence…")
-            sendStartupSequence(connection, info)
-            log?.appendLine("startup sequence sent — waiting for packets")
-
-            val framer  = DumlFramer()
-            val buf     = ByteArray(16_384)
-            val bufInfo = MediaCodec.BufferInfo()
-            var consecutiveErrors = 0
-
+            log?.println("entering read loop")
             while (running && currentCoroutineContext().isActive) {
-                val len = connection.bulkTransfer(info.endpointIn, buf, buf.size, 1_000)
-                if (len < 0) {
-                    if (++consecutiveErrors >= 10) error("DJI video stream lost")
+                val len = connection.bulkTransfer(epIn, readBuf, readBuf.size, READ_TIMEOUT_MS)
+
+                if (len <= 0) {
+                    emptyReads++
+                    if (emptyReads % 10 == 0) log?.println("empty read #$emptyReads — resending RMVT")
+                    // Resend magic packet to recover the stream (per DigiView-Android)
+                    connection.bulkTransfer(epOut, MAGIC_PACKET, MAGIC_PACKET.size, WRITE_TIMEOUT_MS)
                     continue
                 }
-                consecutiveErrors = 0
 
-                val packet = framer.feed(buf, len) ?: continue
+                emptyReads = 0
+                totalPackets++
+                if (totalPackets <= 5 || totalPackets % 100 == 0) {
+                    val preview = readBuf.take(8).joinToString(" ") { "0x%02x".format(it) }
+                    log?.println("pkt #$totalPackets len=$len  [${preview}]")
+                }
 
-                val payHex = packet.payload.take(16).joinToString(" ") { "0x%02x".format(it) }
-                val logLine = "DUML src=0x%02x dst=0x%02x cmdSet=0x%02x cmdId=0x%02x payLen=%d  [%s]"
-                    .format(packet.src, packet.dst, packet.cmdSet, packet.cmdId, packet.payload.size, payHex)
-                log?.appendLine(logLine)
-                if (BuildConfig.DEBUG) Log.d(TAG, logLine)
+                // Feed raw H.264 to the decoder
+                val inputIdx = codec.dequeueInputBuffer(10_000)
+                if (inputIdx >= 0) {
+                    val buf = codec.getInputBuffer(inputIdx)!!
+                    buf.clear()
+                    buf.put(readBuf, 0, len)
+                    codec.queueInputBuffer(inputIdx, 0, len, System.currentTimeMillis() * 1_000L, 0)
+                }
 
-                if (packet.cmdSet != VIDEO_CMD_SET || packet.cmdId != VIDEO_CMD_ID) continue
-                log?.appendLine("  ^^^ VIDEO PACKET — matched cmdSet=0x%02x cmdId=0x%02x".format(VIDEO_CMD_SET, VIDEO_CMD_ID))
-                val nal = packet.payload
-                if (nal.isEmpty()) continue
-
-                val inputIndex = codec.dequeueInputBuffer(10_000)
-                if (inputIndex < 0) continue
-                val inputBuf = codec.getInputBuffer(inputIndex) ?: continue
-                inputBuf.clear()
-                inputBuf.put(nal)
-                val flags = if (isSpsPpsNal(nal)) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
-                codec.queueInputBuffer(inputIndex, 0, nal.size, System.currentTimeMillis() * 1000L, flags)
-
+                // Drain decoded output frames
                 var outIdx = codec.dequeueOutputBuffer(bufInfo, 10_000)
                 while (outIdx != MediaCodec.INFO_TRY_AGAIN_LATER) {
                     when {
@@ -132,6 +147,7 @@ class DjiGogglesVideoSource(
                             val fmt = codec.outputFormat
                             width  = fmt.getInteger(MediaFormat.KEY_WIDTH)
                             height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                            log?.println("output format changed: ${width}x${height}")
                         }
                         outIdx >= 0 -> {
                             val image = codec.getOutputImage(outIdx)
@@ -150,13 +166,13 @@ class DjiGogglesVideoSource(
                     outIdx = codec.dequeueOutputBuffer(bufInfo, 0)
                 }
             }
+            log?.println("loop exited normally. totalPackets=$totalPackets")
         } finally {
-            log?.appendLine("=== session ended ===")
-            log?.flush()
+            log?.println("=== session ended  totalPackets=$totalPackets ===")
             log?.close()
-            try { codec.stop() } catch (_: Exception) {}
+            runCatching { codec.stop() }
             codec.release()
-            connection.releaseInterface(info.iface)
+            connection.releaseInterface(iface)
             connection.close()
         }
     }.flowOn(Dispatchers.IO)
@@ -164,135 +180,68 @@ class DjiGogglesVideoSource(
     override fun start() { frameIndex = 0L; running = true }
     override fun stop()  { running = false }
 
-    private data class StreamInfo(
-        val iface: UsbInterface,
-        val endpointIn: UsbEndpoint,
-        val endpointOut: UsbEndpoint?,
-        val ifaceNumber: Int,
-    )
-
-    private fun findBulkInterface(dev: UsbDevice): StreamInfo? {
-        for (i in 0 until dev.interfaceCount) {
-            val iface = dev.getInterface(i)
-            var epIn: UsbEndpoint? = null
-            var epOut: UsbEndpoint? = null
-            for (j in 0 until iface.endpointCount) {
-                val ep = iface.getEndpoint(j)
-                if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
-                    if (ep.direction == UsbConstants.USB_DIR_IN) epIn = ep else epOut = ep
-                }
-            }
-            if (epIn != null) return StreamInfo(iface, epIn, epOut, iface.id)
+    private fun imageToBitmap(image: android.media.Image, w: Int, h: Int): Bitmap? = try {
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        val yRowStride    = yPlane.rowStride
+        val uvRowStride   = uPlane.rowStride
+        val uvPixelStride = uPlane.pixelStride
+        val nv21 = ByteArray(w * h + 2 * (w / 2) * (h / 2))
+        val yBuf = yPlane.buffer; val uBuf = uPlane.buffer; val vBuf = vPlane.buffer
+        for (row in 0 until h) {
+            yBuf.position(row * yRowStride)
+            yBuf.get(nv21, row * w, w)
         }
-        return null
-    }
-
-    private fun sendStartupSequence(
-        connection: android.hardware.usb.UsbDeviceConnection,
-        info: StreamInfo,
-    ) {
-        val epOut = info.endpointOut ?: return
-        val framer = DumlFramer()
-        val ping = framer.buildPacket(
-            src = SRC_MOBILE_APP, dst = DST_GOGGLES, seq = 0,
-            cmdSet = CMD_SET_GENERAL, cmdId = CMD_ID_PING, needAck = true,
-        )
-        connection.bulkTransfer(epOut, ping, ping.size, 2_000)
-        val startStream = framer.buildPacket(
-            src = SRC_MOBILE_APP, dst = DST_GOGGLES, seq = 1,
-            cmdSet = CMD_SET_VIDEO, cmdId = CMD_ID_START_STREAM, needAck = true,
-        )
-        connection.bulkTransfer(epOut, startStream, startStream.size, 2_000)
-    }
-
-    private fun isSpsPpsNal(nal: ByteArray): Boolean {
-        val offset = when {
-            nal.size > 4 && nal[0] == 0.toByte() && nal[1] == 0.toByte() &&
-                nal[2] == 0.toByte() && nal[3] == 1.toByte() -> 4
-            nal.size > 3 && nal[0] == 0.toByte() && nal[1] == 0.toByte() &&
-                nal[2] == 1.toByte() -> 3
-            else -> return false
+        val uvH = h / 2; val uvW = w / 2
+        for (row in 0 until uvH) for (col in 0 until uvW) {
+            val src = row * uvRowStride + col * uvPixelStride
+            val dst = w * h + row * w + col * 2
+            vBuf.position(src); nv21[dst]     = vBuf.get()
+            uBuf.position(src); nv21[dst + 1] = uBuf.get()
         }
-        val nalType = nal[offset].toInt() and 0x1F
-        return nalType == 7 || nalType == 8
-    }
-
-    private fun imageToBitmap(image: android.media.Image, w: Int, h: Int): Bitmap? {
-        return try {
-            val yPlane = image.planes[0]
-            val uPlane = image.planes[1]
-            val vPlane = image.planes[2]
-            val yRowStride    = yPlane.rowStride
-            val uvRowStride   = uPlane.rowStride
-            val uvPixelStride = uPlane.pixelStride
-            val nv21 = ByteArray(w * h + 2 * (w / 2) * (h / 2))
-            val yBuf = yPlane.buffer
-            val uBuf = uPlane.buffer
-            val vBuf = vPlane.buffer
-            for (row in 0 until h) {
-                yBuf.position(row * yRowStride)
-                yBuf.get(nv21, row * w, w)
-            }
-            val uvH = h / 2; val uvW = w / 2
-            for (row in 0 until uvH) {
-                for (col in 0 until uvW) {
-                    val src = row * uvRowStride + col * uvPixelStride
-                    val dst = w * h + row * w + col * 2
-                    vBuf.position(src); nv21[dst]     = vBuf.get()
-                    uBuf.position(src); nv21[dst + 1] = uBuf.get()
-                }
-            }
-            val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
-            val out = ByteArrayOutputStream()
-            yuvImage.compressToJpeg(Rect(0, 0, w, h), 90, out)
-            BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
-        } catch (e: Exception) {
-            Log.e(TAG, "YUV→Bitmap conversion failed: ${e.message}")
-            null
-        }
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, w, h, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, w, h), 90, out)
+        BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+    } catch (e: Exception) {
+        Log.e(TAG, "YUV→Bitmap failed: ${e.message}")
+        null
     }
 
     companion object {
         private const val TAG = "DjiGogglesVideoSource"
 
-        /** DJI USB vendor ID (0x2CA3 = 11427 decimal). Used in LiveScreen and LiveViewModel. */
-        const val VENDOR_ID = 0x2CA3
+        /** DJI USB vendor ID (0x2CA3 = 11427). */
+        const val VENDOR_ID  = 0x2CA3
+        /** DJI Goggles 2 / Integra product ID (0x001F = 31), confirmed by voc-poc project. */
+        const val PRODUCT_ID = 0x001F
 
-        private const val SRC_MOBILE_APP      = 0x06
-        private const val DST_GOGGLES         = 0x07
-        private const val CMD_SET_GENERAL     = 0x00
-        private const val CMD_ID_PING         = 0x00
-        private const val CMD_SET_VIDEO       = 0x09
-        private const val CMD_ID_START_STREAM = 0x09
-
-        // Video data packets: cmdSet + cmdId that carry H.264 NAL units.
-        // These are placeholder values based on community research.
-        // Update after inspecting Logcat output on first hardware connection.
-        const val VIDEO_CMD_SET = 0x09
-        const val VIDEO_CMD_ID  = 0x00
+        // voc-poc / DigiView-Android protocol constants
+        private val MAGIC_PACKET       = "RMVT".toByteArray()
+        private const val INTERFACE_INDEX       = 3
+        private const val BULK_OUT_ENDPOINT_IDX = 0
+        private const val BULK_IN_ENDPOINT_IDX  = 1
+        private const val READ_BUFFER_SIZE      = 131_072
+        private const val READ_TIMEOUT_MS       = 100
+        private const val WRITE_TIMEOUT_MS      = 2_000
 
         fun openLogWriter(context: Context): PrintWriter? {
-            // Try public Documents/DroneEdge/logs/ first (visible in Files app).
-            // Fall back to app-private storage if MANAGE_EXTERNAL_STORAGE wasn't granted.
-            val publicDir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
-            val file = if (runCatching { publicDir.mkdirs(); publicDir.canWrite() }.getOrDefault(false)) {
-                File(publicDir, "dji_duml_log.txt")
-            } else {
+            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+            val file = if (runCatching { dir.canWrite() }.getOrDefault(false))
+                File(dir, "dji_duml_log.txt")
+            else
                 File(context.getExternalFilesDir("logs").also { it?.mkdirs() }, "dji_duml_log.txt")
-            }
-            // autoFlush=true: every println() goes to disk immediately.
-            // Without this, data stays in the buffer if the process is killed.
             return runCatching { PrintWriter(FileWriter(file, false), true) }
-                .onFailure { Log.e(TAG, "Cannot open log file at ${file.absolutePath}: ${it.message}") }
+                .onFailure { Log.e(TAG, "Cannot open log: ${it.message}") }
                 .getOrNull()
         }
 
         fun logFilePath(context: Context): String {
-            val publicDir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
-            return if (runCatching { publicDir.canWrite() }.getOrDefault(false))
-                File(publicDir, "dji_duml_log.txt").absolutePath
-            else
-                File(context.getExternalFilesDir("logs"), "dji_duml_log.txt").absolutePath
+            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
+            return File(if (runCatching { dir.canWrite() }.getOrDefault(false)) dir
+                        else (context.getExternalFilesDir("logs") ?: dir),
+                        "dji_duml_log.txt").absolutePath
         }
     }
 }
