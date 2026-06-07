@@ -3,6 +3,7 @@ package com.yotam.droneedge.ui.live
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,14 +41,18 @@ import com.yotam.droneedge.ui.theme.FieldSurfaceElevated
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
+import com.yotam.droneedge.ui.theme.LocalAppStrings
 import java.io.File
 
 @Composable
 fun ModelSelectionScreen(
-    initialMode:     DetectorMode,
-    initialFilePath: String? = null,
-    onConfirm:       (DetectorMode, File?) -> Unit,
+    initialMode:      DetectorMode,
+    initialFilePath:  String? = null,
+    currentLanguage:  String = "HE",
+    onConfirm:        (DetectorMode, File?) -> Unit,
+    onLanguageChange: (String) -> Unit = {},
 ) {
+    val strings      = LocalAppStrings.current
     val context      = LocalContext.current
     val availability = remember {
         ModelRegistry.all.associate { it.mode to it.isAvailable(context.assets) }
@@ -62,100 +67,140 @@ fun ModelSelectionScreen(
     var selectedMode     by rememberSaveable { mutableStateOf(initialMode) }
     var selectedFilePath by rememberSaveable { mutableStateOf(initialFilePath) }
 
-    Column(
-        modifier            = Modifier
-            .fillMaxSize()
-            .background(FieldBackground)
-            .padding(horizontal = 32.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.weight(1f))
+    Box(modifier = Modifier.fillMaxSize().background(FieldBackground)) {
 
-        Text(
-            text          = "DRONEEDGE",
-            color         = FieldAccent,
-            fontSize      = 26.sp,
-            fontWeight    = FontWeight.ExtraBold,
-            letterSpacing = 3.sp,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text          = "SELECT DETECTION MODEL",
-            color         = FieldTextMuted,
-            fontSize      = 11.sp,
-            letterSpacing = 1.5.sp,
-        )
-
-        Spacer(Modifier.height(40.dp))
-
-        // ── Built-in models ───────────────────────────────────────────────────
-        ModelRegistry.all.forEachIndexed { index, descriptor ->
-            val available = availability[descriptor.mode] ?: false
-            ModelOption(
-                title       = descriptor.displayName,
-                description = if (available) descriptor.description
-                              else "Model file '${descriptor.assetFile}' not found in assets.",
-                selected    = selectedMode == descriptor.mode && selectedFilePath == null,
-                enabled     = available,
-                onClick     = {
-                    if (available) {
-                        selectedMode     = descriptor.mode
-                        selectedFilePath = null
-                    }
-                },
-            )
-            if (index < ModelRegistry.all.lastIndex || externalModels.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-
-        // ── External models (pushed via ADB to getExternalFilesDir("models")) ─
-        externalModels.forEachIndexed { index, file ->
-            ModelOption(
-                title       = file.nameWithoutExtension,
-                description = "External model — push .tflite files to Android/data/com.yotam.droneedge/files/models/ via ADB",
-                selected    = selectedFilePath == file.absolutePath,
-                enabled     = true,
-                onClick     = {
-                    selectedMode     = DetectorMode.TFLITE
-                    selectedFilePath = file.absolutePath
-                },
-            )
-            if (index < externalModels.lastIndex) Spacer(Modifier.height(10.dp))
-        }
-
-        if (externalModels.isEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text      = "Drop .tflite files into Android/data/com.yotam.droneedge/files/models/ via ADB to add custom models",
-                color     = FieldTextMuted,
-                fontSize  = 10.sp,
-                lineHeight = 15.sp,
-            )
-        }
-
-        Spacer(Modifier.height(40.dp))
-
-        Button(
-            onClick  = {
-                val file = selectedFilePath?.let { File(it) }
-                onConfirm(selectedMode, file)
-            },
-            modifier = Modifier.widthIn(min = 160.dp, max = 240.dp),
-            colors   = ButtonDefaults.buttonColors(
-                containerColor = FieldAccent,
-                contentColor   = Color.Black,
-            ),
+        Column(
+            modifier            = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 32.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Spacer(Modifier.weight(1f))
+
             Text(
-                text          = "CONFIRM",
-                fontWeight    = FontWeight.Bold,
-                letterSpacing = 1.sp,
+                text          = "DRONEEDGE",
+                color         = FieldAccent,
+                fontSize      = 26.sp,
+                fontWeight    = FontWeight.ExtraBold,
+                letterSpacing = 3.sp,
             )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text          = strings.selectModel,
+                color         = FieldTextMuted,
+                fontSize      = 11.sp,
+                letterSpacing = 1.5.sp,
+            )
+
+            Spacer(Modifier.height(40.dp))
+
+            // ── Built-in models ───────────────────────────────────────────────────
+            ModelRegistry.all.forEachIndexed { index, descriptor ->
+                val available = availability[descriptor.mode] ?: false
+                ModelOption(
+                    title       = descriptor.displayName,
+                    description = if (available) descriptor.description
+                                  else strings.modelNotFound(descriptor.assetFile ?: ""),
+                    selected    = selectedMode == descriptor.mode && selectedFilePath == null,
+                    enabled     = available,
+                    onClick     = {
+                        if (available) {
+                            selectedMode     = descriptor.mode
+                            selectedFilePath = null
+                        }
+                    },
+                )
+                if (index < ModelRegistry.all.lastIndex || externalModels.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+
+            // ── External models ───────────────────────────────────────────────────
+            externalModels.forEachIndexed { index, file ->
+                ModelOption(
+                    title       = file.nameWithoutExtension,
+                    description = strings.externalModelDesc,
+                    selected    = selectedFilePath == file.absolutePath,
+                    enabled     = true,
+                    onClick     = {
+                        selectedMode     = DetectorMode.TFLITE
+                        selectedFilePath = file.absolutePath
+                    },
+                )
+                if (index < externalModels.lastIndex) Spacer(Modifier.height(10.dp))
+            }
+
+            if (externalModels.isEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text       = strings.externalModelHint,
+                    color      = FieldTextMuted,
+                    fontSize   = 10.sp,
+                    lineHeight = 15.sp,
+                )
+            }
+
+            Spacer(Modifier.height(40.dp))
+
+            Button(
+                onClick  = {
+                    val file = selectedFilePath?.let { File(it) }
+                    onConfirm(selectedMode, file)
+                },
+                modifier = Modifier.widthIn(min = 160.dp, max = 240.dp),
+                colors   = ButtonDefaults.buttonColors(
+                    containerColor = FieldAccent,
+                    contentColor   = Color.Black,
+                ),
+            ) {
+                Text(
+                    text          = strings.confirm,
+                    fontWeight    = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
         }
 
-        Spacer(Modifier.weight(1f))
+        // ── Language toggle ───────────────────────────────────────────────────────
+        LanguageToggle(
+            currentLanguage  = currentLanguage,
+            onLanguageChange = onLanguageChange,
+            modifier         = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp),
+        )
+    }
+}
+
+@Composable
+private fun LanguageToggle(
+    currentLanguage:  String,
+    onLanguageChange: (String) -> Unit,
+    modifier:         Modifier = Modifier,
+) {
+    Row(modifier = modifier) {
+        listOf("EN", "HE").forEach { code ->
+            val active = currentLanguage == code
+            Text(
+                text       = code,
+                color      = if (active) FieldAccent else FieldTextMuted,
+                fontSize   = 11.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                modifier   = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .border(
+                        width = 1.dp,
+                        color = if (active) FieldAccent else FieldBorder,
+                        shape = RoundedCornerShape(4.dp),
+                    )
+                    .clickable { onLanguageChange(code) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            if (code == "EN") Spacer(Modifier.size(4.dp))
+        }
     }
 }
 
