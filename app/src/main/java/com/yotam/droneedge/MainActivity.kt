@@ -133,12 +133,17 @@ class MainActivity : ComponentActivity() {
 
     private fun dumpUsbDevices() {
         runCatching {
-            val usbManager = getSystemService(USB_SERVICE) as android.hardware.usb.UsbManager
             val sb = StringBuilder()
-            sb.appendLine("=== USB device dump ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} ===")
+            val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+            sb.appendLine("=== DroneEdge diagnostics $ts ===")
+            sb.appendLine()
+
+            // ── USB Host devices ──────────────────────────────────────────────
+            sb.appendLine("--- USB Host deviceList ---")
+            val usbManager = getSystemService(USB_SERVICE) as android.hardware.usb.UsbManager
             val devices = usbManager.deviceList
             if (devices.isEmpty()) {
-                sb.appendLine("No USB devices found in deviceList.")
+                sb.appendLine("(empty — device may be RNDIS/network or claimed by another app's service)")
             } else {
                 devices.values.forEach { dev ->
                     sb.appendLine("Device: ${dev.deviceName}")
@@ -148,13 +153,49 @@ class MainActivity : ComponentActivity() {
                     sb.appendLine("  interfaces= ${dev.interfaceCount}")
                     for (i in 0 until dev.interfaceCount) {
                         val iface = dev.getInterface(i)
-                        sb.appendLine("    iface[$i] class=0x%02x sub=0x%02x endpoints=${iface.endpointCount}".format(iface.interfaceClass, iface.interfaceSubclass))
+                        sb.appendLine("    iface[$i] class=0x%02x sub=0x%02x proto=0x%02x endpoints=${iface.endpointCount}"
+                            .format(iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol))
                     }
                     sb.appendLine("  hasPermission = ${usbManager.hasPermission(dev)}")
                     sb.appendLine()
                 }
             }
-            File(droneEdgeLogsDir(), "usb_devices.txt").writeText(sb.toString())
+
+            // ── Camera2 devices (external cameras appear here) ────────────────
+            sb.appendLine()
+            sb.appendLine("--- Camera2 camera IDs ---")
+            val camManager = getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            val camIds = camManager.cameraIdList
+            if (camIds.isEmpty()) {
+                sb.appendLine("(none)")
+            } else {
+                camIds.forEach { id ->
+                    val chars = runCatching { camManager.getCameraCharacteristics(id) }.getOrNull()
+                    val facing = chars?.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                    val facingStr = when (facing) {
+                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK  -> "BACK"
+                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL ← possible goggles"
+                        else -> "UNKNOWN($facing)"
+                    }
+                    sb.appendLine("  Camera id=$id  facing=$facingStr")
+                }
+            }
+
+            // ── Network interfaces ────────────────────────────────────────────
+            sb.appendLine()
+            sb.appendLine("--- Network interfaces ---")
+            val netIfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            netIfaces.forEach { iface ->
+                val addrs = iface.inetAddresses.toList()
+                    .filter { !it.isLoopbackAddress }
+                    .map { it.hostAddress }
+                if (addrs.isNotEmpty()) {
+                    sb.appendLine("  ${iface.name}: ${addrs.joinToString()}")
+                }
+            }
+
+            File(droneEdgeLogsDir(), "diagnostics.txt").writeText(sb.toString())
         }
     }
 
