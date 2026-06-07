@@ -21,10 +21,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
-import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileWriter
+import java.io.PrintWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -271,7 +271,7 @@ class DjiGogglesVideoSource(
         const val VIDEO_CMD_SET = 0x09
         const val VIDEO_CMD_ID  = 0x00
 
-        fun openLogWriter(context: Context): BufferedWriter? {
+        fun openLogWriter(context: Context): PrintWriter? {
             // Try public Documents/DroneEdge/logs/ first (visible in Files app).
             // Fall back to app-private storage if MANAGE_EXTERNAL_STORAGE wasn't granted.
             val publicDir = com.droneedge.app.MainActivity.droneEdgeLogsDir()
@@ -280,8 +280,10 @@ class DjiGogglesVideoSource(
             } else {
                 File(context.getExternalFilesDir("logs").also { it?.mkdirs() }, "dji_duml_log.txt")
             }
-            return runCatching { BufferedWriter(FileWriter(file, false)) }
-                .onFailure { Log.e(TAG, "Cannot open log file: ${it.message}") }
+            // autoFlush=true: every println() goes to disk immediately.
+            // Without this, data stays in the buffer if the process is killed.
+            return runCatching { PrintWriter(FileWriter(file, false), true) }
+                .onFailure { Log.e(TAG, "Cannot open log file at ${file.absolutePath}: ${it.message}") }
                 .getOrNull()
         }
 

@@ -166,6 +166,14 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _videoUri.value     = null
         _usbDevice.value    = null
         _cameraFacing.value = null
+        // Write a breadcrumb so we know useDjiSource was called even if START is never tapped.
+        runCatching {
+            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+            java.io.File(dir, "dji_source_set.txt").writeText(
+                "useDjiSource called at ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}\n" +
+                "vendor=0x%04x product=0x%04x name=${device.deviceName}".format(device.vendorId, device.productId)
+            )
+        }
     }
 
     fun clearDjiSource() {
