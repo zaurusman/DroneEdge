@@ -42,6 +42,7 @@ import com.droneedge.app.ui.theme.FieldSurfaceElevated
 import com.droneedge.app.ui.theme.FieldTextMuted
 import com.droneedge.app.ui.theme.FieldTextPrimary
 import com.droneedge.app.ui.theme.FieldTextSecondary
+import com.droneedge.app.MainActivity
 import com.droneedge.app.ui.theme.LocalAppStrings
 import java.io.File
 
@@ -59,8 +60,8 @@ fun ModelSelectionScreen(
         ModelRegistry.all.associate { it.mode to it.isAvailable(context.assets) }
     }
     val externalModels: List<File> = remember {
-        val dir = context.getExternalFilesDir("models")
-        dir?.listFiles { f -> f.extension == "tflite" }
+        MainActivity.droneEdgeModelsDir()
+            .listFiles { f -> f.extension == "tflite" }
             ?.sortedBy { it.name }
             ?: emptyList()
     }

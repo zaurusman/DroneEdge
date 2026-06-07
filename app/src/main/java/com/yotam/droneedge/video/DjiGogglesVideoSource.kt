@@ -271,11 +271,11 @@ class DjiGogglesVideoSource(
         const val VIDEO_CMD_ID  = 0x00
 
         fun openLogWriter(context: Context): BufferedWriter? = runCatching {
-            val file = File(context.getExternalFilesDir(null), "dji_duml_log.txt")
-            BufferedWriter(FileWriter(file, false)) // overwrite each session
+            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+            BufferedWriter(FileWriter(File(dir, "dji_duml_log.txt"), false))
         }.getOrNull()
 
-        fun logFilePath(context: Context): String =
-            File(context.getExternalFilesDir(null), "dji_duml_log.txt").absolutePath
+        fun logFilePath(): String =
+            File(com.droneedge.app.MainActivity.droneEdgeLogsDir(), "dji_duml_log.txt").absolutePath
     }
 }

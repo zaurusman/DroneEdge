@@ -2,7 +2,10 @@ package com.droneedge.app
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -21,6 +24,7 @@ import com.droneedge.app.ui.recordings.RecordingsScreen
 import com.droneedge.app.ui.theme.AppStrings
 import com.droneedge.app.ui.theme.DroneEdgeTheme
 import com.droneedge.app.ui.theme.LocalAppStrings
+import java.io.File
 
 private const val PREFS_NAME      = "droneedge_prefs"
 private const val KEY_DETECTOR    = "detector_mode"
@@ -34,7 +38,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        getExternalFilesDir("models")?.mkdirs()
+        ensurePublicDirs()
+        if (!Environment.isExternalStorageManager()) {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    .setData(Uri.parse("package:$packageName"))
+            )
+        }
         intent?.let { vm.handleUsbLaunchIntent(it, this) }
         setContent {
             DroneEdgeTheme {
@@ -113,5 +123,18 @@ class MainActivity : ComponentActivity() {
             .edit()
             .putString(KEY_LANGUAGE, code)
             .apply()
+    }
+
+    private fun ensurePublicDirs() {
+        droneEdgeModelsDir().mkdirs()
+        droneEdgeLogsDir().mkdirs()
+    }
+
+    companion object {
+        fun droneEdgeModelsDir(): File =
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "DroneEdge/models")
+
+        fun droneEdgeLogsDir(): File =
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "DroneEdge/logs")
     }
 }
