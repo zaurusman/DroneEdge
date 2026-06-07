@@ -78,6 +78,7 @@ import androidx.media3.ui.PlayerView
 import com.yotam.droneedge.detection.Detection
 import com.yotam.droneedge.ui.theme.FieldAccent
 import com.yotam.droneedge.ui.theme.FieldBackground
+import com.yotam.droneedge.ui.theme.LocalAppStrings
 import com.yotam.droneedge.ui.theme.FieldBorder
 import com.yotam.droneedge.ui.theme.FieldRecRed
 import com.yotam.droneedge.ui.theme.FieldRecRedLight
@@ -117,11 +118,13 @@ fun LiveScreen(
 
     var showSourceSheet by remember { mutableStateOf(false) }
 
+    val strings = LocalAppStrings.current
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) vm.useCameraSource(CameraSelector.LENS_FACING_BACK, context, lifecycleOwner)
-        else vm.reportError("Camera permission denied — grant it in Settings to use the device camera")
+        else vm.reportError(strings.cameraDenied)
     }
 
     LaunchedEffect(lifecycleOwner) {
@@ -153,6 +156,8 @@ fun LiveScreen(
     ) { uri: Uri? ->
         if (uri != null) vm.useFileSource(uri, context)
     }
+
+    val currentStrings by androidx.compose.runtime.rememberUpdatedState(LocalAppStrings.current)
 
     DisposableEffect(Unit) {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -188,10 +193,10 @@ fun LiveScreen(
                     }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                         if (device.vendorId == DJI_VENDOR_ID) {
-                            vm.reportError("DJI Goggles disconnected")
+                            vm.reportError(currentStrings.djiDisconnected)
                             vm.clearDjiSource()
                         } else {
-                            vm.reportError("USB camera disconnected")
+                            vm.reportError(currentStrings.usbDisconnected)
                             vm.clearUsbSource()
                         }
                     }
@@ -220,9 +225,9 @@ fun LiveScreen(
     val sourceLabel = when {
         djiDevice    != null -> "DJI"
         usbDevice    != null -> "USB"
-        cameraFacing != null -> "Camera"
-        videoUri     != null -> "File"
-        else                 -> "No Source"
+        cameraFacing != null -> strings.sourceCamera
+        videoUri     != null -> strings.sourceFile
+        else                 -> strings.sourceNoSource
     }
     val modelLabel = activeModelFile?.nameWithoutExtension
         ?: ModelRegistry.all.find { it.mode == detectorMode }?.shortLabel
@@ -257,13 +262,17 @@ fun LiveScreen(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text          = "STATUS",
+                text          = strings.statusLabel,
                 color         = hudColor,
                 fontSize      = 9.sp,
                 letterSpacing = 1.sp,
             )
             Text(
-                text       = sessionState.name,
+                text       = when (sessionState) {
+                    SessionState.IDLE     -> strings.stateIdle
+                    SessionState.RUNNING  -> strings.stateRunning
+                    SessionState.STOPPING -> strings.stateStopping
+                },
                 color      = when (sessionState) {
                     SessionState.RUNNING  -> FieldAccent.copy(alpha = 0.85f)
                     SessionState.STOPPING -> Color(0xCCFFAB00)
@@ -311,7 +320,7 @@ fun LiveScreen(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
                 action = {
-                    TextButton(onClick = { vm.clearError() }) { Text("Dismiss") }
+                    TextButton(onClick = { vm.clearError() }) { Text(strings.dismiss) }
                 },
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor   = MaterialTheme.colorScheme.onErrorContainer,
@@ -329,11 +338,11 @@ fun LiveScreen(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 88.dp, start = 16.dp, end = 16.dp),
                 action = {
-                    TextButton(onClick = { vm.clearLastRecording() }) { Text("Dismiss") }
+                    TextButton(onClick = { vm.clearLastRecording() }) { Text(strings.dismiss) }
                 },
                 containerColor = FieldSurface,
                 contentColor   = FieldTextSecondary,
-            ) { Text("Saved to Movies/DroneEdge/") }
+            ) { Text(strings.savedTo) }
         }
 
         // ── Bottom bar ────────────────────────────────────────────────────────
@@ -375,7 +384,7 @@ fun LiveScreen(
                                 }
                             }
                             if (uvcDevice == null) {
-                                vm.reportError("No UVC camera found — connect a USB camera and try again")
+                                vm.reportError(strings.noUvcCamera)
                             } else if (usbManager.hasPermission(uvcDevice)) {
                                 vm.useUsbSource(uvcDevice, context)
                             } else {
@@ -396,7 +405,7 @@ fun LiveScreen(
                             }
                             when {
                                 djiDev == null ->
-                                    vm.reportError("No DJI Goggles detected — connect via USB and power on the drone")
+                                    vm.reportError(strings.noDjiGoggles)
                                 usbManager.hasPermission(djiDev) ->
                                     vm.useDjiSource(djiDev, context)
                                 else ->
@@ -443,6 +452,8 @@ private fun BottomBar(
     onStop:         () -> Unit,
     onArmRecording: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
+
     Row(
         modifier              = modifier
             .background(Color(0xEE111111))
@@ -465,7 +476,7 @@ private fun BottomBar(
                     contentColor = FieldAccent,
                 ),
                 border = androidx.compose.foundation.BorderStroke(1.dp, FieldAccent),
-            ) { Text("Gallery", fontSize = 12.sp) }
+            ) { Text(strings.gallery, fontSize = 12.sp) }
         }
 
         if (sessionState == SessionState.RUNNING) {
@@ -484,9 +495,9 @@ private fun BottomBar(
         ) {
             Text(
                 text       = when (sessionState) {
-                    SessionState.IDLE     -> "START"
-                    SessionState.RUNNING  -> "STOP"
-                    SessionState.STOPPING -> "STOPPING"
+                    SessionState.IDLE     -> strings.start
+                    SessionState.RUNNING  -> strings.stop
+                    SessionState.STOPPING -> strings.stateStopping
                 },
                 fontWeight    = FontWeight.Bold,
                 letterSpacing = 0.5.sp,
@@ -504,6 +515,8 @@ private fun RecButton(
     elapsedMs:      Long,
     onArmRecording: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
+
     val infiniteTransition = rememberInfiniteTransition(label = "rec")
     val dotAlpha by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -520,7 +533,7 @@ private fun RecButton(
             onClick = onArmRecording,
             colors  = ButtonDefaults.outlinedButtonColors(contentColor = FieldRecRedLight),
             border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
-        ) { Text("REC", fontSize = 12.sp) }
+        ) { Text(strings.rec, fontSize = 12.sp) }
 
         RecordingState.ARMED -> {
             val timerStr = remember(elapsedMs) {
@@ -535,7 +548,7 @@ private fun RecButton(
                 border  = androidx.compose.foundation.BorderStroke(1.dp, FieldRecRed),
             ) {
                 Text(
-                    text       = "● REC  $timerStr",
+                    text       = "● ${strings.rec}  $timerStr",
                     fontSize   = 12.sp,
                     color      = FieldRecRedLight.copy(alpha = dotAlpha),
                     fontWeight = FontWeight.SemiBold,
@@ -548,7 +561,7 @@ private fun RecButton(
             enabled  = false,
             colors   = ButtonDefaults.outlinedButtonColors(contentColor = FieldTextMuted),
             border   = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
-        ) { Text("Saving…", fontSize = 12.sp) }
+        ) { Text(strings.saving, fontSize = 12.sp) }
     }
 }
 
@@ -649,6 +662,8 @@ private fun NamingDialog(
     onConfirm: (String) -> Unit,
     onSkip:    () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
+
     val defaultName = remember(sessionId) {
         runCatching {
             val ts     = sessionId.removePrefix("session_")
@@ -660,24 +675,24 @@ private fun NamingDialog(
 
     AlertDialog(
         onDismissRequest = onSkip,
-        title = { Text("Name this recording", color = FieldTextPrimary) },
+        title = { Text(strings.nameRecordingTitle, color = FieldTextPrimary) },
         text  = {
             OutlinedTextField(
                 value         = name,
                 onValueChange = { name = it },
-                label         = { Text("Session name") },
+                label         = { Text(strings.sessionNameLabel) },
                 singleLine    = true,
                 modifier      = Modifier.fillMaxWidth(),
             )
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(name) }) {
-                Text("Save", color = FieldAccent)
+                Text(strings.save, color = FieldAccent)
             }
         },
         dismissButton = {
             TextButton(onClick = onSkip) {
-                Text("Skip", color = FieldTextMuted)
+                Text(strings.skip, color = FieldTextMuted)
             }
         },
         containerColor = FieldSurface,
