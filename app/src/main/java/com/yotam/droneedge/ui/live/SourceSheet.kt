@@ -23,6 +23,7 @@ import com.yotam.droneedge.ui.theme.FieldBorder
 import com.yotam.droneedge.ui.theme.FieldSurfaceElevated
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
+import com.yotam.droneedge.ui.theme.LocalAppStrings
 
 enum class SourceChoice { CAMERA, USB, FILE, DJI, FAKE }
 
@@ -34,6 +35,7 @@ fun SourceSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val strings = LocalAppStrings.current
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -43,7 +45,7 @@ fun SourceSheet(
     ) {
         Column(modifier = Modifier.padding(bottom = 24.dp)) {
             Text(
-                text          = "SELECT SOURCE",
+                text          = strings.selectSource,
                 color         = FieldTextMuted,
                 fontSize      = 10.sp,
                 letterSpacing = 1.5.sp,
@@ -51,7 +53,7 @@ fun SourceSheet(
             )
 
             SourceRow(
-                label    = "Camera (back)",
+                label    = strings.sourceCameraBack,
                 active   = activeChoice == SourceChoice.CAMERA,
                 enabled  = true,
                 onClick  = { onSelect(SourceChoice.CAMERA) },
@@ -63,19 +65,19 @@ fun SourceSheet(
                 onClick  = { onSelect(SourceChoice.USB) },
             )
             SourceRow(
-                label    = "Video File",
+                label    = strings.sourceVideoFile,
                 active   = activeChoice == SourceChoice.FILE,
                 enabled  = true,
                 onClick  = { onSelect(SourceChoice.FILE) },
             )
             SourceRow(
-                label   = "DJI Goggles",
+                label   = strings.sourceDji,
                 active  = activeChoice == SourceChoice.DJI,
                 enabled = true,
                 onClick = { onSelect(SourceChoice.DJI) },
             )
             SourceRow(
-                label    = "Fake (dev)",
+                label    = strings.sourceFake,
                 active   = activeChoice == SourceChoice.FAKE,
                 enabled  = true,
                 onClick  = { onSelect(SourceChoice.FAKE) },
