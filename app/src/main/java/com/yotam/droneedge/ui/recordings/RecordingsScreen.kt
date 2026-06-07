@@ -71,6 +71,7 @@ import com.yotam.droneedge.ui.theme.FieldSurface
 import com.yotam.droneedge.ui.theme.FieldTextMuted
 import com.yotam.droneedge.ui.theme.FieldTextPrimary
 import com.yotam.droneedge.ui.theme.FieldTextSecondary
+import com.yotam.droneedge.ui.theme.LocalAppStrings
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,6 +92,7 @@ fun RecordingsScreen(onBack: () -> Unit) {
     val recordings   by vm.recordings.collectAsStateWithLifecycle()
     val error        by vm.error.collectAsStateWithLifecycle()
     var playingEntry by remember { mutableStateOf<RecordingEntry?>(null) }
+    val strings      = LocalAppStrings.current
 
     LaunchedEffect(Unit) { vm.reload() }
 
@@ -109,10 +111,10 @@ fun RecordingsScreen(onBack: () -> Unit) {
     error?.let { msg ->
         AlertDialog(
             onDismissRequest = { vm.clearError() },
-            title            = { Text("Error", color = FieldTextPrimary) },
+            title            = { Text(strings.error, color = FieldTextPrimary) },
             text             = { Text(msg, color = FieldTextSecondary) },
             confirmButton    = {
-                TextButton(onClick = { vm.clearError() }) { Text("OK", color = FieldAccent) }
+                TextButton(onClick = { vm.clearError() }) { Text(strings.ok, color = FieldAccent) }
             },
         )
     }
@@ -128,6 +130,7 @@ private fun RecordingList(
     onDelete:   (RecordingEntry) -> Unit,
     onBack:     () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -149,7 +152,7 @@ private fun RecordingList(
                     .padding(horizontal = 8.dp),
             )
             Text(
-                text          = "GALLERY",
+                text          = strings.galleryTitle,
                 color         = FieldTextPrimary,
                 fontWeight    = FontWeight.Bold,
                 fontSize      = 15.sp,
@@ -159,7 +162,7 @@ private fun RecordingList(
 
         if (recordings.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No recordings found.", color = FieldTextMuted)
+                Text(strings.noRecordings, color = FieldTextMuted)
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -188,6 +191,7 @@ private fun RecordingRow(
     var showMenu   by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
+    val strings    = LocalAppStrings.current
 
     val dateStr = remember(entry.dateMs) {
         SimpleDateFormat("yyyy-MM-dd  HH:mm", Locale.getDefault()).format(Date(entry.dateMs))
@@ -254,11 +258,11 @@ private fun RecordingRow(
             onDismissRequest = { showMenu = false },
         ) {
             DropdownMenuItem(
-                text    = { Text("Rename") },
+                text    = { Text(strings.rename) },
                 onClick = { showMenu = false; showRename = true },
             )
             DropdownMenuItem(
-                text    = { Text("Delete") },
+                text    = { Text(strings.delete) },
                 onClick = { showMenu = false; showDelete = true },
             )
         }
@@ -268,23 +272,23 @@ private fun RecordingRow(
         var nameText by remember { mutableStateOf(entry.sessionName) }
         AlertDialog(
             onDismissRequest = { showRename = false },
-            title            = { Text("Rename session", color = FieldTextPrimary) },
+            title            = { Text(strings.renameSession, color = FieldTextPrimary) },
             text             = {
                 OutlinedTextField(
                     value         = nameText,
                     onValueChange = { nameText = it },
-                    label         = { Text("Session name") },
+                    label         = { Text(strings.sessionNameLabel) },
                     singleLine    = true,
                 )
             },
             confirmButton = {
                 TextButton(onClick = { onRename(nameText.trim()); showRename = false }) {
-                    Text("Save", color = FieldAccent)
+                    Text(strings.save, color = FieldAccent)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRename = false }) {
-                    Text("Cancel", color = FieldTextSecondary)
+                    Text(strings.cancel, color = FieldTextSecondary)
                 }
             },
         )
@@ -293,21 +297,21 @@ private fun RecordingRow(
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            title            = { Text("Delete session", color = FieldTextPrimary) },
+            title            = { Text(strings.deleteSession, color = FieldTextPrimary) },
             text             = {
                 Text(
-                    "Delete \"${entry.sessionName}\"? This cannot be undone.",
+                    strings.deleteConfirmBody(entry.sessionName),
                     color = FieldTextSecondary,
                 )
             },
             confirmButton = {
                 TextButton(onClick = { onDelete(); showDelete = false }) {
-                    Text("Delete", color = Color.Red)
+                    Text(strings.delete, color = Color.Red)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDelete = false }) {
-                    Text("Cancel", color = FieldTextSecondary)
+                    Text(strings.cancel, color = FieldTextSecondary)
                 }
             },
         )
