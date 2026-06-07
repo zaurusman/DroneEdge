@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -17,11 +18,14 @@ import com.yotam.droneedge.ui.live.LiveScreen
 import com.yotam.droneedge.ui.live.LiveViewModel
 import com.yotam.droneedge.ui.live.ModelSelectionScreen
 import com.yotam.droneedge.ui.recordings.RecordingsScreen
+import com.yotam.droneedge.ui.theme.AppStrings
 import com.yotam.droneedge.ui.theme.DroneEdgeTheme
+import com.yotam.droneedge.ui.theme.LocalAppStrings
 
 private const val PREFS_NAME      = "droneedge_prefs"
 private const val KEY_DETECTOR    = "detector_mode"
 private const val KEY_MODEL_FILE  = "model_file_path"
+private const val KEY_LANGUAGE    = "language_code"
 
 class MainActivity : ComponentActivity() {
 
@@ -33,28 +37,38 @@ class MainActivity : ComponentActivity() {
         intent?.let { vm.handleUsbLaunchIntent(it, this) }
         setContent {
             DroneEdgeTheme {
-                var showModelSelection by rememberSaveable { mutableStateOf(true) }
-                var showGallery        by rememberSaveable { mutableStateOf(false) }
+                var languageCode by rememberSaveable { mutableStateOf(loadLanguageCode()) }
+                val appStrings = if (languageCode == "EN") AppStrings.English else AppStrings.Hebrew
 
-                when {
-                    showModelSelection -> ModelSelectionScreen(
-                        initialMode     = loadDetectorMode(),
-                        initialFilePath = loadModelFilePath(),
-                        onConfirm       = { mode, file ->
-                            vm.setDetectorMode(mode, this@MainActivity, file)
-                            saveDetectorMode(mode)
-                            saveModelFilePath(file?.absolutePath)
-                            showModelSelection = false
-                        },
-                    )
-                    showGallery -> {
-                        BackHandler { showGallery = false }
-                        RecordingsScreen(onBack = { showGallery = false })
+                CompositionLocalProvider(LocalAppStrings provides appStrings) {
+                    var showModelSelection by rememberSaveable { mutableStateOf(true) }
+                    var showGallery        by rememberSaveable { mutableStateOf(false) }
+
+                    when {
+                        showModelSelection -> ModelSelectionScreen(
+                            initialMode      = loadDetectorMode(),
+                            initialFilePath  = loadModelFilePath(),
+                            currentLanguage  = languageCode,
+                            onConfirm        = { mode, file ->
+                                vm.setDetectorMode(mode, this@MainActivity, file)
+                                saveDetectorMode(mode)
+                                saveModelFilePath(file?.absolutePath)
+                                showModelSelection = false
+                            },
+                            onLanguageChange = { code ->
+                                languageCode = code
+                                saveLanguage(code)
+                            },
+                        )
+                        showGallery -> {
+                            BackHandler { showGallery = false }
+                            RecordingsScreen(onBack = { showGallery = false })
+                        }
+                        else -> LiveScreen(
+                            vm        = vm,
+                            onGallery = { showGallery = true },
+                        )
                     }
-                    else -> LiveScreen(
-                        vm           = vm,
-                        onGallery    = { showGallery = true },
-                    )
                 }
             }
         }
@@ -89,4 +103,14 @@ class MainActivity : ComponentActivity() {
             .apply()
     }
 
+    private fun loadLanguageCode(): String =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_LANGUAGE, "HE") ?: "HE"
+
+    private fun saveLanguage(code: String) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LANGUAGE, code)
+            .apply()
+    }
 }
