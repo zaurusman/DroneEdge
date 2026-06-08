@@ -96,19 +96,18 @@ class TfliteDetector(
         dstRect.set(0, 0, inputWidth, inputHeight)
 
         // Write delegate info to the public logs folder so it's visible on the USB drive.
+        // Only use values already computed in init — no interpreter queries here.
         runCatching {
             val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
-            val sb = StringBuilder()
-            sb.appendLine("model=$modelFileName")
-            sb.appendLine("delegate=$delegateName")
-            sb.appendLine("input=${inputWidth}x${inputHeight} $inputDataType")
-            sb.appendLine("outputTensors=${interpreter.outputTensorCount}")
-            for (i in 0 until interpreter.outputTensorCount) {
-                val t = interpreter.getOutputTensor(i)
-                sb.appendLine("  output[$i] shape=${t.shape().toList()} dtype=${t.dataType()}")
+            val lines = buildList {
+                add("model=$modelFileName")
+                add("delegate=$delegateName")
+                add("input=${inputWidth}x${inputHeight} $inputDataType")
+                gpuFailureReason?.let { add("gpuError=$it") }
             }
-            gpuFailureReason?.let { sb.appendLine("gpuError=$it") }
-            File(logDir, "tflite_delegate.txt").writeText(sb.toString())
+            File(logDir, "tflite_delegate.txt").printWriter().use { pw ->
+                lines.forEach { pw.println(it) }
+            }
         }
     }
 
