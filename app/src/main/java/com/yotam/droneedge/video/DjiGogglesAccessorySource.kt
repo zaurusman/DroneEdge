@@ -4,12 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
-import android.graphics.ImageFormat
-import android.media.ImageReader
 import android.net.Uri
 import android.os.Handler
-import android.os.HandlerThread
-import android.util.Log
+import android.os.Looper
+import android.view.PixelCopy
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -17,14 +15,15 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.ExtractorsFactory
-import com.droneedge.app.recording.yuv420ToArgbPixels
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -33,8 +32,8 @@ import java.io.PipedOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.resume
 
 /**
  * Streams H.264 video from DJI Goggles 2 / Integra via USB Accessory mode.
@@ -47,6 +46,10 @@ import java.util.concurrent.atomic.AtomicReference
  * from the matching PipedInputStream via PipeDataSource + RawH264Extractor,
  * which uses ExoPlayer's built-in H264Reader for proper NAL-unit parsing and
  * renders directly to the provided Surface. No manual MediaCodec management.
+ *
+ * Inference: PixelCopy captures the display surface at 10fps into a 640×360 Bitmap
+ * and attaches it to VideoFrame.bitmap for TfliteDetector. This avoids the
+ * ImageReader surface compatibility issues of a second hardware decoder.
  *
  * Based on the approach from fpv-wtf/voc-poc + d4rken/fpv-dvca.
  */
@@ -86,48 +89,42 @@ class DjiGogglesAccessorySource(
         val h264PipeOut = PipedOutputStream()
         val h264PipeIn  = PipedInputStream(h264PipeOut, 1_048_576) // 1 MB cap (~1.6s at 5Mbps)
 
-        // Inference decoder: second pipe + ImageReader at 10fps cap
-        val inferPipeOut = PipedOutputStream()
-        val inferPipeIn  = PipedInputStream(inferPipeOut, 8_388_608)
-        val inferImageReader = ImageReader.newInstance(1920, 1080, ImageFormat.YUV_420_888, 3)
+        // PixelCopy inference: capture the already-rendered display surface at 10fps.
+        // Avoids a second hardware decoder whose YUV_420_888 Surface output is not
+        // guaranteed across Android devices/drivers.
         val pendingInferenceBitmap = AtomicReference<Bitmap?>(null)
-        val lastInferenceMs = AtomicLong(0L)
-        val inferHandlerThread = HandlerThread("inference-reader").also { it.start() }
-        val inferYBuf   = ByteArray(1920 * 1080)
-        val inferUBuf   = ByteArray(960 * 540 * 2 + 8)   // generous for stride padding + NV12
-        val inferVBuf   = ByteArray(960 * 540 * 2 + 8)
-        inferImageReader.setOnImageAvailableListener({ reader ->
-            val now = System.currentTimeMillis()
-            if (now - lastInferenceMs.get() < 100L) {
-                reader.acquireLatestImage()?.close()
-                return@setOnImageAvailableListener
-            }
-            lastInferenceMs.set(now)
-            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+        var pixelCopyCount = 0L
+        val pixelCopyJob = if (renderSurface != null) launch(Dispatchers.Main) {
+            val inferBitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
+            val handler = Handler(Looper.getMainLooper())
             try {
-                val w = image.width
-                val h = image.height
-                val yPlane = image.planes[0]
-                val uPlane = image.planes[1]
-                val vPlane = image.planes[2]
-                val yLen = yPlane.buffer.remaining()
-                val uLen = uPlane.buffer.remaining()
-                val vLen = vPlane.buffer.remaining()
-                yPlane.buffer.get(inferYBuf, 0, yLen)
-                uPlane.buffer.get(inferUBuf, 0, uLen)
-                vPlane.buffer.get(inferVBuf, 0, vLen)
-                val pixels = yuv420ToArgbPixels(
-                    inferYBuf, yPlane.rowStride,
-                    inferUBuf, inferVBuf,
-                    uPlane.rowStride, uPlane.pixelStride,
-                    w, h,
-                )
-                val bmp = Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
-                pendingInferenceBitmap.getAndSet(bmp)?.recycle()
+                while (isActive) {
+                    delay(100L)
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        PixelCopy.request(
+                            renderSurface, null, inferBitmap,
+                            { result ->
+                                if (result == PixelCopy.SUCCESS) {
+                                    pixelCopyCount++
+                                    if (pixelCopyCount == 1L || pixelCopyCount % 100L == 0L) {
+                                        log?.println("PixelCopy inference: frame #$pixelCopyCount")
+                                    }
+                                    val copy = inferBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    pendingInferenceBitmap.getAndSet(copy)?.recycle()
+                                } else {
+                                    log?.println("PixelCopy inference: failed result=$result")
+                                }
+                                cont.resume(Unit)
+                            },
+                            handler,
+                        )
+                    }
+                }
             } finally {
-                image.close()
+                inferBitmap.recycle()
+                pendingInferenceBitmap.getAndSet(null)?.recycle()
             }
-        }, Handler(inferHandlerThread.looper))
+        } else null
 
         // ExoPlayer must live on a Looper thread (main).
         val playerJob = launch(Dispatchers.Main) {
@@ -189,46 +186,6 @@ class DjiGogglesAccessorySource(
             }
         }
 
-        val inferPipeAlive = java.util.concurrent.atomic.AtomicBoolean(true)
-
-        val inferPlayerJob = launch(Dispatchers.Main) {
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(200, 400, 50, 100)
-                .build()
-            val inferPlayer = ExoPlayer.Builder(context).setLoadControl(loadControl).build()
-            inferPlayer.setVideoSurface(inferImageReader.surface)
-            inferPlayer.addListener(object : androidx.media3.common.Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    val name = when (state) {
-                        androidx.media3.common.Player.STATE_IDLE      -> "IDLE"
-                        androidx.media3.common.Player.STATE_BUFFERING -> "BUFFERING"
-                        androidx.media3.common.Player.STATE_READY     -> "READY"
-                        androidx.media3.common.Player.STATE_ENDED     -> "ENDED"
-                        else -> "UNKNOWN($state)"
-                    }
-                    log?.println("InferenceDecoder state → $name")
-                }
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    log?.println("InferenceDecoder ERROR: ${error.errorCodeName} — ${error.message}")
-                    inferPipeAlive.set(false)
-                }
-            })
-            val dsFactory: DataSource.Factory = DataSource.Factory { PipeDataSource(inferPipeIn) }
-            val exFactory: ExtractorsFactory  = ExtractorsFactory { arrayOf(RawH264Extractor()) }
-            val inferSource = ProgressiveMediaSource.Factory(dsFactory, exFactory)
-                .createMediaSource(MediaItem.fromUri(Uri.EMPTY))
-            inferPlayer.setMediaSource(inferSource)
-            inferPlayer.prepare()
-            inferPlayer.play()
-            log?.println("InferenceDecoder ExoPlayer started")
-            try {
-                awaitCancellation()
-            } finally {
-                inferPlayer.release()
-                log?.println("InferenceDecoder ExoPlayer released")
-            }
-        }
-
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
         var totalReads  = 0
@@ -287,13 +244,6 @@ class DjiGogglesAccessorySource(
                     if (port == VIDEO_IN && length > 0) {
                         h264PipeOut.write(data, i + HEADER_SIZE, length)
                         h264PipeOut.flush()
-                        if (inferPipeAlive.get()) runCatching {
-                            inferPipeOut.write(data, i + HEADER_SIZE, length)
-                            inferPipeOut.flush()
-                        }.onFailure {
-                            inferPipeAlive.set(false)
-                            log?.println("InferenceDecoder pipe broken: ${it.message}")
-                        }
                         videoBytes += length
                         if (videoBytes <= 32_768L || videoBytes % 1_048_576L < length) {
                             log?.println("video pipe: wrote ${length}B (total ${videoBytes / 1024}KB) at rx#$totalFrames")
@@ -311,12 +261,7 @@ class DjiGogglesAccessorySource(
             log?.println("totalReads=$totalReads  totalFrames=$totalFrames  videoBytes=${videoBytes / 1024}KB")
 
         } finally {
-            inferPlayerJob.cancel()
-            inferHandlerThread.quitSafely()
-            pendingInferenceBitmap.getAndSet(null)?.recycle()
-            runCatching { inferPipeOut.close() }
-            runCatching { inferPipeIn.close() }
-            inferImageReader.close()
+            pixelCopyJob?.cancel()
             playerJob.cancel()
             log?.println("=== session ended ===")
             log?.close()
