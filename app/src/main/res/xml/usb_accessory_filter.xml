@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        DJI Goggles 2 / Integra connect to Android in USB Accessory mode:
+        the Goggles act as USB Host and Android acts as the USB peripheral.
+        Manufacturer string may vary by firmware; we cast a wide net and
+        filter by manufacturer string in code after connection.
+    -->
+    <usb-accessory manufacturer="DJI" />
+</resources>
