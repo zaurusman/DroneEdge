@@ -136,54 +136,16 @@ class TfliteDetector(
 
     /**
      * Tries delegates in priority order:
-     *   1. NNAPI  — Samsung ONE DSP / Qualcomm Hexagon; FP16 allowed for 2× throughput.
-     *              Skipped when skipNnapi=true.
-     *   2. GPU    — Adreno/Mali via OpenGL ES (Xclipse/other may not be compatible)
+     *   1. GPU    — Adreno via OpenGL ES. CompatibilityList skipped (hardcoded blocklist can
+     *              falsely exclude newer drivers). Best for FP32 dynamic-range-quantized models.
+     *   2. NNAPI  — Samsung ONE DSP / Qualcomm Hexagon. Skipped when skipNnapi=true.
+     *              Plain only — FP16 fails on dynamic-range models (INT8 filter type mismatch).
      *   3. CPU    — 8 threads (always works)
      *
-     * Sets delegateName and gpuFailureReason for diagnostics.
+     * Sets delegateName, gpuFailureReason, nnApiFailureReason for diagnostics.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI — try with FP16 first, fall back to plain NNAPI if Options throws.
-        if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // 1a. NNAPI with FP16 (2× faster on Samsung ONE DSP / Hexagon NPU)
-            runCatching {
-                model.rewind()
-                val nnApiOpts = NnApiDelegate.Options().apply {
-                    setAllowFp16(true)
-                    setExecutionPreference(NnApiDelegate.Options.EXECUTION_PREFERENCE_FAST_SINGLE_ANSWER)
-                }
-                val nnApi = NnApiDelegate(nnApiOpts)
-                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
-                Interpreter(model, opts) to nnApi
-            }.onSuccess {
-                Log.i(TAG, "inference: NNAPI-FP16")
-                delegateName = "NNAPI-FP16"
-                return it
-            }.onFailure { e ->
-                nnApiFailureReason = "fp16:${e.message?.take(120) ?: e.javaClass.simpleName}"
-                Log.w(TAG, "NNAPI-FP16 unavailable: ${e.message}")
-            }
-
-            // 1b. Plain NNAPI (FP16 options may have caused the throw)
-            runCatching {
-                model.rewind()
-                val nnApi = NnApiDelegate()
-                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
-                Interpreter(model, opts) to nnApi
-            }.onSuccess {
-                Log.i(TAG, "inference: NNAPI")
-                delegateName = "NNAPI"
-                return it
-            }.onFailure { e ->
-                nnApiFailureReason = (nnApiFailureReason ?: "") +
-                    " plain:${e.message?.take(120) ?: e.javaClass.simpleName}"
-                Log.w(TAG, "NNAPI plain unavailable: ${e.message}")
-            }
-        }
-
-        // 2. GPU via OpenGL ES. Skip CompatibilityList — it uses a hardcoded blocklist that
-        //    may falsely exclude newer Samsung/Adreno drivers. Try directly and catch failures.
+        // 1. GPU — try unconditionally; Adreno 750 handles FP32 YOLO well.
         run {
             val gpu = runCatching { GpuDelegate() }.getOrElse { e ->
                 gpuFailureReason = "gpuNew:${e.message?.take(100) ?: e.javaClass.simpleName}"
@@ -203,7 +165,24 @@ class TfliteDetector(
             }
         }
 
-        // 3. CPU fallback — 8 threads to use all big/middle cores on Tab S10+
+        // 2. NNAPI — plain only (FP16 fails: INT8 filter type mismatch in dynamic-range model).
+        if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                model.rewind()
+                val nnApi = NnApiDelegate()
+                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
+                Interpreter(model, opts) to nnApi
+            }.onSuccess {
+                Log.i(TAG, "inference: NNAPI")
+                delegateName = "NNAPI"
+                return it
+            }.onFailure { e ->
+                nnApiFailureReason = e.message?.take(120) ?: e.javaClass.simpleName
+                Log.w(TAG, "NNAPI unavailable: ${e.message}")
+            }
+        }
+
+        // 3. CPU fallback — 8 threads
         model.rewind()
         Log.i(TAG, "inference: CPU (8 threads)")
         delegateName = "CPU"
