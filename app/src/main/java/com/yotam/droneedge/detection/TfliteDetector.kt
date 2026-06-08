@@ -51,6 +51,7 @@ class TfliteDetector(
     var delegateName: String = "CPU"
         private set
     private var gpuFailureReason: String? = null
+    private var nnApiFailureReason: String? = null
     val modelInfo: String get() = "$delegateName ${inputWidth}×${inputHeight}"
 
     // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
@@ -103,6 +104,7 @@ class TfliteDetector(
                 add("model=$modelFileName")
                 add("delegate=$delegateName")
                 add("input=${inputWidth}x${inputHeight} $inputDataType")
+                nnApiFailureReason?.let { add("nnApiError=$it") }
                 gpuFailureReason?.let { add("gpuError=$it") }
             }
             File(logDir, "tflite_delegate.txt").printWriter().use { pw ->
@@ -143,8 +145,9 @@ class TfliteDetector(
      * Sets delegateName and gpuFailureReason for diagnostics.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI — try with FP16 allowed (2× faster on Samsung ONE DSP and Hexagon NPU).
+        // 1. NNAPI — try with FP16 first, fall back to plain NNAPI if Options throws.
         if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // 1a. NNAPI with FP16 (2× faster on Samsung ONE DSP / Hexagon NPU)
             runCatching {
                 model.rewind()
                 val nnApiOpts = NnApiDelegate.Options().apply {
@@ -158,7 +161,26 @@ class TfliteDetector(
                 Log.i(TAG, "inference: NNAPI-FP16")
                 delegateName = "NNAPI-FP16"
                 return it
-            }.onFailure { Log.w(TAG, "NNAPI unavailable: ${it.message}") }
+            }.onFailure { e ->
+                nnApiFailureReason = "fp16:${e.message?.take(120) ?: e.javaClass.simpleName}"
+                Log.w(TAG, "NNAPI-FP16 unavailable: ${e.message}")
+            }
+
+            // 1b. Plain NNAPI (FP16 options may have caused the throw)
+            runCatching {
+                model.rewind()
+                val nnApi = NnApiDelegate()
+                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
+                Interpreter(model, opts) to nnApi
+            }.onSuccess {
+                Log.i(TAG, "inference: NNAPI")
+                delegateName = "NNAPI"
+                return it
+            }.onFailure { e ->
+                nnApiFailureReason = (nnApiFailureReason ?: "") +
+                    " plain:${e.message?.take(120) ?: e.javaClass.simpleName}"
+                Log.w(TAG, "NNAPI plain unavailable: ${e.message}")
+            }
         }
 
         // 2. GPU via OpenGL ES. Xclipse (Samsung Exynos) may report not-compatible.
