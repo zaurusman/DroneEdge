@@ -135,48 +135,56 @@ class TfliteDetector(
 
     /**
      * Tries delegates in priority order:
-     *   1. NNAPI  — Qualcomm Hexagon DSP/NPU; skipped when skipNnapi=true (FP32 dynamic-range
-     *              models cause dequantize ops to shuttle between DSP and CPU, often slower)
-     *   2. GPU    — Adreno via OpenGL ES
+     *   1. NNAPI  — Samsung ONE DSP / Qualcomm Hexagon; FP16 allowed for 2× throughput.
+     *              Skipped when skipNnapi=true.
+     *   2. GPU    — Adreno/Mali via OpenGL ES (Xclipse/other may not be compatible)
      *   3. CPU    — 8 threads (always works)
      *
-     * Sets delegateName so callers can display which backend is active.
+     * Sets delegateName and gpuFailureReason for diagnostics.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI
+        // 1. NNAPI — try with FP16 allowed (2× faster on Samsung ONE DSP and Hexagon NPU).
         if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching {
                 model.rewind()
-                val nnApi = NnApiDelegate()
+                val nnApiOpts = NnApiDelegate.Options().apply {
+                    setAllowFp16(true)
+                    setExecutionPreference(NnApiDelegate.Options.EXECUTION_PREFERENCE_FAST_SINGLE_ANSWER)
+                }
+                val nnApi = NnApiDelegate(nnApiOpts)
                 val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
                 Interpreter(model, opts) to nnApi
             }.onSuccess {
-                Log.i(TAG, "inference: NNAPI")
-                delegateName = "NNAPI"
+                Log.i(TAG, "inference: NNAPI-FP16")
+                delegateName = "NNAPI-FP16"
                 return it
             }.onFailure { Log.w(TAG, "NNAPI unavailable: ${it.message}") }
         }
 
-        // 2. GPU via OpenGL ES — inner Options class is inaccessible in TFLite 2.14 so we use
-        //    the no-args constructor. Interpreter init is wrapped so the delegate is closed on failure.
+        // 2. GPU via OpenGL ES. Xclipse (Samsung Exynos) may report not-compatible.
+        //    Capture all failure modes so the log shows why we fell to CPU.
         runCatching {
             model.rewind()
             val compat = CompatibilityList()
             val supported = compat.isDelegateSupportedOnThisDevice
             compat.close()
-            if (!supported) return@runCatching null
+            if (!supported) {
+                gpuFailureReason = "CompatibilityList=false"
+                return@runCatching null
+            }
             val gpu = GpuDelegate()
             runCatching {
                 val opts = Interpreter.Options().apply { addDelegate(gpu) }
                 Interpreter(model, opts) to gpu
             }.getOrElse { e ->
                 gpu.close()
-                gpuFailureReason = e.message ?: e.javaClass.simpleName
-                Log.w(TAG, "GPU interpreter init failed: $gpuFailureReason")
+                gpuFailureReason = "interpInit:${e.message?.take(100) ?: e.javaClass.simpleName}"
                 null
             }
+        }.onFailure { e ->
+            gpuFailureReason = "gpuNew:${e.message?.take(100) ?: e.javaClass.simpleName}"
         }.getOrNull()?.let {
-            Log.i(TAG, "inference: GPU (Adreno)")
+            Log.i(TAG, "inference: GPU")
             delegateName = "GPU"
             return it
         }

@@ -343,7 +343,6 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         val tfd = TfliteDetector(
                             context.applicationContext,
                             modelFileName = "north_20260419.tflite",
-                            skipNnapi = true,
                         )
                         tfliteDetector?.close()
                         tfliteDetector = tfd
