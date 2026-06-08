@@ -48,6 +48,10 @@ class TfliteDetector(
     private val inputDataType: DataType
     private val outputParser: DetectionOutputParser
 
+    var delegateName: String = "CPU"
+        private set
+    val modelInfo: String get() = "$delegateName ${inputWidth}×${inputHeight}"
+
     // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
     private val inputBuffer: ByteBuffer
     private val pixels: IntArray
@@ -114,16 +118,16 @@ class TfliteDetector(
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Tries delegates in priority order for this device:
-     *   1. NNAPI  — routes to Qualcomm Hexagon DSP/NPU (best on Snapdragon)
-     *   2. GPU    — Adreno via OpenGL ES (Adreno 750 on Tab S10+)
-     *   3. CPU    — 4 threads (always works)
+     * Tries delegates in priority order:
+     *   1. NNAPI  — Qualcomm Hexagon DSP/NPU; skipped when skipNnapi=true (FP32 dynamic-range
+     *              models cause dequantize ops to shuttle between DSP and CPU, often slower)
+     *   2. GPU    — Adreno via OpenGL ES
+     *   3. CPU    — 8 threads (always works)
      *
-     * The winning delegate is stored so it can be closed when the detector is closed.
+     * Sets delegateName so callers can display which backend is active.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI — available API 28+. Skipped for FP32 dynamic-range models (dequantize ops
-        //    cause NNAPI to shuttle tensors between DSP and CPU, often slower than GPU).
+        // 1. NNAPI
         if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching {
                 model.rewind()
@@ -131,31 +135,40 @@ class TfliteDetector(
                 val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
                 Interpreter(model, opts) to nnApi
             }.onSuccess {
-                Log.i(TAG, "inference: NNAPI (Hexagon DSP/NPU)")
+                Log.i(TAG, "inference: NNAPI")
+                delegateName = "NNAPI"
                 return it
             }.onFailure { Log.w(TAG, "NNAPI unavailable: ${it.message}") }
         }
 
-        // 2. GPU delegate — Adreno 750 via OpenGL ES
+        // 2. GPU via OpenGL ES — inner Options class is inaccessible in TFLite 2.14 so we use
+        //    the no-args constructor. Interpreter init is wrapped so the delegate is closed on failure.
         runCatching {
             model.rewind()
             val compat = CompatibilityList()
             val supported = compat.isDelegateSupportedOnThisDevice
             compat.close()
-            if (supported) {
-                val gpu  = GpuDelegate()
+            if (!supported) return@runCatching null
+            val gpu = GpuDelegate()
+            runCatching {
                 val opts = Interpreter.Options().apply { addDelegate(gpu) }
                 Interpreter(model, opts) to gpu
-            } else null
+            }.getOrElse { e ->
+                gpu.close()
+                Log.w(TAG, "GPU interpreter init failed: ${e.message}")
+                null
+            }
         }.getOrNull()?.let {
-            Log.i(TAG, "inference: GPU delegate (Adreno)")
+            Log.i(TAG, "inference: GPU (Adreno)")
+            delegateName = "GPU"
             return it
         }
 
-        // 3. CPU fallback
+        // 3. CPU fallback — 8 threads to use all big/middle cores on Tab S10+
         model.rewind()
-        Log.i(TAG, "inference: CPU (4 threads)")
-        return Interpreter(model, Interpreter.Options().apply { numThreads = 4 }) to null
+        Log.i(TAG, "inference: CPU (8 threads)")
+        delegateName = "CPU"
+        return Interpreter(model, Interpreter.Options().apply { numThreads = 8 }) to null
     }
 
     /**

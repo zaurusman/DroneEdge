@@ -88,6 +88,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _confidenceThreshold = MutableStateFlow(0.5f)
     val confidenceThreshold: StateFlow<Float> = _confidenceThreshold.asStateFlow()
 
+    // ── Delegate / model info (e.g. "GPU-FP16 640×640") ─────────────────────
+    private val _detectorInfo = MutableStateFlow("")
+    val detectorInfo: StateFlow<String> = _detectorInfo.asStateFlow()
+
     fun setConfidenceThreshold(value: Float) {
         val clamped = value.coerceIn(0.05f, 0.95f)
         _confidenceThreshold.value = clamped
@@ -303,6 +307,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 _detectorMode.value = DetectorMode.NO_MODEL
                 _activeModelFile.value = null
                 _confidenceThreshold.value = 0.5f
+                _detectorInfo.value = ""
                 _error.value = null
             }
             DetectorMode.FAKE -> {
@@ -311,6 +316,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 detector = FakeDetector()
                 _detectorMode.value = DetectorMode.FAKE
                 _activeModelFile.value = null
+                _detectorInfo.value = ""
                 _error.value = null
             }
             DetectorMode.TFLITE -> {
@@ -323,6 +329,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         detector = tfd
                         _detectorMode.value = DetectorMode.TFLITE
                         _activeModelFile.value = modelFile
+                        _detectorInfo.value = tfd.modelInfo
                         _error.value = null
                     } catch (e: Throwable) {
                         _error.value = "TFLite load failed: ${e.message}"
@@ -343,6 +350,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         detector = tfd
                         _detectorMode.value = DetectorMode.NORTH
                         _activeModelFile.value = null
+                        _detectorInfo.value = tfd.modelInfo
                         _error.value = null
                     } catch (e: Throwable) {
                         _error.value = "TFLite load failed: ${e.message}"

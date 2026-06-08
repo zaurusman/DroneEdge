@@ -121,6 +121,7 @@ fun LiveScreen(
     val detectorMode          by vm.detectorMode.collectAsStateWithLifecycle()
     val activeModelFile       by vm.activeModelFile.collectAsStateWithLifecycle()
     val confidenceThreshold   by vm.confidenceThreshold.collectAsStateWithLifecycle()
+    val detectorInfo          by vm.detectorInfo.collectAsStateWithLifecycle()
     val error           by vm.error.collectAsStateWithLifecycle()
     val recordingState   by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording    by vm.lastRecording.collectAsStateWithLifecycle()
@@ -400,6 +401,15 @@ fun LiveScreen(
                         color    = FieldAccent,
                         fontSize = 13.sp,
                         modifier = Modifier.clickable { vm.setConfidenceThreshold(confidenceThreshold + 0.05f) },
+                    )
+                }
+                if (detectorInfo.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text     = detectorInfo,
+                        color    = hudColor,
+                        fontSize = 9.sp,
+                        letterSpacing = 0.5.sp,
                     )
                 }
             }
