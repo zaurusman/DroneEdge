@@ -466,6 +466,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             // automatically when inference is slower than the source frame rate.
             launch(Dispatchers.Default) {
                 _latestFrame.filterNotNull().collect { frame ->
+                    if (frame.bitmap == null) return@collect  // keep last detections visible
                     val results = detector.detect(frame)
                     _detections.value = results
 
