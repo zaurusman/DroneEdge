@@ -205,6 +205,8 @@ class DjiGogglesAccessorySource(
             }
         }
 
+        var inferPipeAlive = true
+
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
         var totalReads  = 0
@@ -263,9 +265,12 @@ class DjiGogglesAccessorySource(
                     if (port == VIDEO_IN && length > 0) {
                         h264PipeOut.write(data, i + HEADER_SIZE, length)
                         h264PipeOut.flush()
-                        runCatching {
+                        if (inferPipeAlive) runCatching {
                             inferPipeOut.write(data, i + HEADER_SIZE, length)
                             inferPipeOut.flush()
+                        }.onFailure {
+                            inferPipeAlive = false
+                            log?.println("InferenceDecoder pipe broken: ${it.message}")
                         }
                         videoBytes += length
                         if (videoBytes <= 32_768L || videoBytes % 1_048_576L < length) {
@@ -288,6 +293,7 @@ class DjiGogglesAccessorySource(
             inferHandlerThread.quitSafely()
             pendingInferenceBitmap.getAndSet(null)?.recycle()
             runCatching { inferPipeOut.close() }
+            runCatching { inferPipeIn.close() }
             inferImageReader.close()
             playerJob.cancel()
             log?.println("=== session ended ===")
