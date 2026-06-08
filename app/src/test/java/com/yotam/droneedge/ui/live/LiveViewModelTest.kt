@@ -216,6 +216,7 @@ class LiveViewModelTest {
     @Test
     fun `timer advances while recording is armed`() = runTest(testDispatcher) {
         vm.start()
+        vm.armRecording()
         advanceTimeBy(2500L)
         val elapsed = vm.recordingElapsedMs.value
         vm.stop()

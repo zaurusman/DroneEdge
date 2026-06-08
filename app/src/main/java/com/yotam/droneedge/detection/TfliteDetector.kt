@@ -5,9 +5,14 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Build
+import android.util.Log
 import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
@@ -34,6 +39,7 @@ class TfliteDetector(
     modelFile: File? = null,
 ) : Detector, Closeable {
 
+    private val delegate: Closeable?   // NnApiDelegate or GpuDelegate; null = CPU
     private val interpreter: Interpreter
     val labels: List<String>
     private val inputWidth: Int
@@ -53,8 +59,9 @@ class TfliteDetector(
     init {
         val model = if (modelFile != null) loadModelFromFile(modelFile)
                     else loadModelFile(context, modelFileName)
-        val options = Interpreter.Options().apply { numThreads = 4 }
-        interpreter = Interpreter(model, options)
+        val (interp, del) = buildInterpreter(model)
+        interpreter = interp
+        delegate    = del
         labels = loadLabelsForModel(context, modelFile, labelsFileName)
 
         // Read input shape and dtype directly from the model — works for any size or dtype.
@@ -99,10 +106,55 @@ class TfliteDetector(
 
     override fun close() {
         interpreter.close()
+        delegate?.close()
         scaledBitmap.recycle()
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Tries delegates in priority order for this device:
+     *   1. NNAPI  — routes to Qualcomm Hexagon DSP/NPU (best on Snapdragon)
+     *   2. GPU    — Adreno via OpenGL ES (Adreno 750 on Tab S10+)
+     *   3. CPU    — 4 threads (always works)
+     *
+     * The winning delegate is stored so it can be closed when the detector is closed.
+     */
+    private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
+        // 1. NNAPI — available API 28+ (our minSdk), routes to Qualcomm Hexagon DSP/NPU
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                model.rewind()
+                val nnApi = NnApiDelegate()
+                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
+                Interpreter(model, opts) to nnApi
+            }.onSuccess {
+                Log.i(TAG, "inference: NNAPI (Hexagon DSP/NPU)")
+                return it
+            }.onFailure { Log.w(TAG, "NNAPI unavailable: ${it.message}") }
+        }
+
+        // 2. GPU delegate — Adreno 750 via OpenGL ES
+        runCatching {
+            model.rewind()
+            val compat = CompatibilityList()
+            val supported = compat.isDelegateSupportedOnThisDevice
+            compat.close()
+            if (supported) {
+                val gpu  = GpuDelegate()
+                val opts = Interpreter.Options().apply { addDelegate(gpu) }
+                Interpreter(model, opts) to gpu
+            } else null
+        }.getOrNull()?.let {
+            Log.i(TAG, "inference: GPU delegate (Adreno)")
+            return it
+        }
+
+        // 3. CPU fallback
+        model.rewind()
+        Log.i(TAG, "inference: CPU (4 threads)")
+        return Interpreter(model, Interpreter.Options().apply { numThreads = 4 }) to null
+    }
 
     /**
      * Memory-map the model file so the interpreter can read it directly without copying.
@@ -127,6 +179,8 @@ class TfliteDetector(
         }
         return context.assets.open(fallbackFileName).bufferedReader().readLines()
     }
+
+    private companion object { private const val TAG = "TfliteDetector" }
 
     // Scales [bitmap] into the pre-allocated scaledBitmap and packs pixels into inputBuffer.
     // Zero heap allocations on the hot inference path.
