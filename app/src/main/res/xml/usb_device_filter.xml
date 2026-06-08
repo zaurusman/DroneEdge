@@ -8,6 +8,10 @@
     -->
     <usb-device class="14" />
 
-    <!-- DJI Goggles 2 / Integra: vendor 0x2CA3=11427, product 0x001F=31 (confirmed by voc-poc/DigiView) -->
-    <usb-device vendor-id="11427" product-id="31" />
+    <!--
+        DJI products (vendor 0x2CA3 = 11427).
+        No product-id filter so we match Goggles 2, Integra, and any future DJI device
+        regardless of the product ID that firmware exposes.
+    -->
+    <usb-device vendor-id="11427" />
 </resources>

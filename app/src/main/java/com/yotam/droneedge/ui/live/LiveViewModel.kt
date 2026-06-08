@@ -60,9 +60,17 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _usbDevice = MutableStateFlow<UsbDevice?>(null)
     val usbDevice: StateFlow<UsbDevice?> = _usbDevice.asStateFlow()
 
-    // ── DJI Goggles device (null = no DJI source) ────────────────────────────
+    // ── DJI Goggles device — USB Host mode (FPV V1/V2, null = not active) ──────
     private val _djiDevice = MutableStateFlow<UsbDevice?>(null)
     val djiDevice: StateFlow<UsbDevice?> = _djiDevice.asStateFlow()
+
+    // ── DJI Goggles accessory — USB Accessory mode (Goggles 2/Integra) ─────────
+    private val _djiAccessory = MutableStateFlow<android.hardware.usb.UsbAccessory?>(null)
+    val djiAccessory: StateFlow<android.hardware.usb.UsbAccessory?> = _djiAccessory.asStateFlow()
+
+    // ── Surface for DJI GPU-direct rendering ─────────────────────────────────
+    private val _djiSurface = MutableStateFlow<android.view.Surface?>(null)
+    fun setDjiSurface(surface: android.view.Surface?) { _djiSurface.value = surface }
 
     // ── Camera facing (null = no camera source) ───────────────────────────────
     private val _cameraFacing = MutableStateFlow<Int?>(null)
@@ -182,6 +190,29 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (_sessionState.value == SessionState.IDLE) videoSource = FakeVideoSource()
     }
 
+    fun useDjiAccessorySource(accessory: android.hardware.usb.UsbAccessory, context: android.content.Context) {
+        if (_sessionState.value != SessionState.IDLE) return
+        videoSource         = com.droneedge.app.video.DjiGogglesAccessorySource(context.applicationContext, accessory)
+        _djiAccessory.value = accessory
+        _djiDevice.value    = null
+        _videoUri.value     = null
+        _usbDevice.value    = null
+        _cameraFacing.value = null
+        runCatching {
+            val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+            java.io.File(dir, "dji_source_set.txt").appendText(
+                "\nuseDjiAccessorySource at ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}" +
+                "\nmanufacturer=${accessory.manufacturer} model=${accessory.model} version=${accessory.version}"
+            )
+        }
+    }
+
+    fun clearDjiAccessorySource() {
+        if (_djiAccessory.value == null) return
+        _djiAccessory.value = null
+        if (_sessionState.value == SessionState.IDLE) videoSource = FakeVideoSource()
+    }
+
     fun useCameraSource(facing: Int, context: Context, lifecycleOwner: LifecycleOwner) {
         if (_sessionState.value != SessionState.IDLE) return
         videoSource         = CameraVideoSource(context.applicationContext, lifecycleOwner, facing)
@@ -201,28 +232,49 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         // CameraVideoSource has no self-exit mechanism; the session must be stopped manually.
     }
 
-    /** Called from MainActivity when the app is launched by a USB_DEVICE_ATTACHED intent. */
+    /** Called from MainActivity when the app is launched by a USB_DEVICE_ATTACHED or USB_ACCESSORY_ATTACHED intent. */
     fun handleUsbLaunchIntent(intent: android.content.Intent, context: android.content.Context) {
+        val usbManager = context.getSystemService(android.content.Context.USB_SERVICE) as android.hardware.usb.UsbManager
+
+        // USB Accessory mode (Goggles 2 / Integra: DJI is USB host, Android is peripheral)
+        val accessory = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_ACCESSORY, android.hardware.usb.UsbAccessory::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_ACCESSORY)
+        }
+        if (accessory != null) {
+            if (usbManager.hasPermission(accessory)) useDjiAccessorySource(accessory, context)
+            else {
+                val pi = accessoryPermissionIntent(context)
+                usbManager.requestPermission(accessory, pi)
+            }
+            return
+        }
+
+        // USB Host mode (FPV Goggles V1/V2 or UVC cameras: Android is USB host)
         val device = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE, android.hardware.usb.UsbDevice::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(android.hardware.usb.UsbManager.EXTRA_DEVICE)
         } ?: return
-        val usbManager = context.getSystemService(android.content.Context.USB_SERVICE) as android.hardware.usb.UsbManager
         if (usbManager.hasPermission(device)) {
-            if (device.vendorId == DjiGogglesVideoSource.VENDOR_ID) useDjiSource(device, context)
+            if (DjiGogglesVideoSource.isDjiDevice(device)) useDjiSource(device, context)
             else useUsbSource(device, context)
         } else {
-            // App launched by USB_DEVICE_ATTACHED but permission not yet granted — request it.
-            // The result is delivered to LiveScreen's BroadcastReceiver once the user responds.
-            val permIntent = android.app.PendingIntent.getBroadcast(
-                context, 0,
-                android.content.Intent("${context.packageName}.USB_PERMISSION"),
-                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-            usbManager.requestPermission(device, permIntent)
+            val pi = accessoryPermissionIntent(context)
+            usbManager.requestPermission(device, pi)
         }
+    }
+
+    private fun accessoryPermissionIntent(context: android.content.Context): android.app.PendingIntent {
+        val intent = android.content.Intent("${context.packageName}.USB_PERMISSION")
+            .setPackage(context.packageName)
+        val flags = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+            android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+        else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+        return android.app.PendingIntent.getBroadcast(context, 0, intent, flags)
     }
 
     fun reportError(message: String) {
@@ -252,30 +304,34 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             }
             DetectorMode.TFLITE -> {
                 if (context == null) return
-                try {
-                    val tfd = TfliteDetector(context.applicationContext, modelFile = modelFile)
-                    tfliteDetector?.close()
-                    tfliteDetector = tfd
-                    detector = tfd
-                    _detectorMode.value = DetectorMode.TFLITE
-                    _activeModelFile.value = modelFile
-                    _error.value = null
-                } catch (e: Exception) {
-                    _error.value = "TFLite load failed: ${e.message}"
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val tfd = TfliteDetector(context.applicationContext, modelFile = modelFile)
+                        tfliteDetector?.close()
+                        tfliteDetector = tfd
+                        detector = tfd
+                        _detectorMode.value = DetectorMode.TFLITE
+                        _activeModelFile.value = modelFile
+                        _error.value = null
+                    } catch (e: Throwable) {
+                        _error.value = "TFLite load failed: ${e.message}"
+                    }
                 }
             }
             DetectorMode.NORTH -> {
                 if (context == null) return
-                try {
-                    val tfd = TfliteDetector(context.applicationContext, modelFileName = "north_20260419.tflite")
-                    tfliteDetector?.close()
-                    tfliteDetector = tfd
-                    detector = tfd
-                    _detectorMode.value = DetectorMode.NORTH
-                    _activeModelFile.value = null
-                    _error.value = null
-                } catch (e: Exception) {
-                    _error.value = "TFLite load failed: ${e.message}"
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        val tfd = TfliteDetector(context.applicationContext, modelFileName = "north_20260419.tflite")
+                        tfliteDetector?.close()
+                        tfliteDetector = tfd
+                        detector = tfd
+                        _detectorMode.value = DetectorMode.NORTH
+                        _activeModelFile.value = null
+                        _error.value = null
+                    } catch (e: Throwable) {
+                        _error.value = "TFLite load failed: ${e.message}"
+                    }
                 }
             }
         }
@@ -360,33 +416,49 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun start() {
         if (_sessionState.value != SessionState.IDLE) return
+
+        // For DJI accessory mode, re-create the source with the GPU surface that Compose
+        // has set up by the time the user presses START.
+        _djiAccessory.value?.let { acc ->
+            videoSource = com.droneedge.app.video.DjiGogglesAccessorySource(
+                context        = getApplication<android.app.Application>().applicationContext,
+                accessory      = acc,
+                renderSurface  = _djiSurface.value,
+            )
+        }
+
         _sessionState.value = SessionState.RUNNING
         previewFrameTimes.clear()
         inferenceFrameTimes.clear()
         videoSource.start()
 
-        armRecording()
-
         pipelineJob = viewModelScope.launch {
             // Coroutine 1: collect frames at full source speed, track preview FPS, record.
             launch {
-                videoSource.frames.collect { frame ->
-                    val now = System.currentTimeMillis()
-                    previewFrameTimes.addLast(now)
-                    val cutoff = now - 1000L
-                    while (previewFrameTimes.isNotEmpty() && previewFrameTimes.first() < cutoff)
-                        previewFrameTimes.removeFirst()
-                    _previewFps.value = previewFrameTimes.size.toFloat()
-                    _latestFrame.value = frame
+                try {
+                    videoSource.frames.collect { frame ->
+                        val now = System.currentTimeMillis()
+                        previewFrameTimes.addLast(now)
+                        val cutoff = now - 1000L
+                        while (previewFrameTimes.isNotEmpty() && previewFrameTimes.first() < cutoff)
+                            previewFrameTimes.removeFirst()
+                        _previewFps.value = previewFrameTimes.size.toFloat()
+                        _latestFrame.value = frame
 
-                    if (_recordingState.value == RecordingState.ARMED) {
-                        recorder?.onFrame(frame, _detections.value)
+                        if (_recordingState.value == RecordingState.ARMED) {
+                            recorder?.onFrame(frame, _detections.value)
+                        }
                     }
-                }
-                // Flow ended without an explicit stop() — source disconnected or failed.
-                if (_sessionState.value == SessionState.RUNNING) {
-                    _error.value = "Video source disconnected"
-                    stop()
+                    // Flow ended normally (source exhausted / stopped).
+                    if (_sessionState.value == SessionState.RUNNING) {
+                        _error.value = "Video source disconnected"
+                        stop()
+                    }
+                } catch (e: Exception) {
+                    if (_sessionState.value == SessionState.RUNNING) {
+                        _error.value = e.message ?: "Video source error"
+                        stop()
+                    }
                 }
             }
 

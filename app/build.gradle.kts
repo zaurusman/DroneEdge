@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.media3.ui)
     implementation(libs.tensorflow.lite)
     implementation(libs.tensorflow.lite.support)
+    implementation(libs.tensorflow.lite.gpu)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     testImplementation(libs.junit)

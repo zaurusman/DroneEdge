@@ -131,73 +131,7 @@ class MainActivity : ComponentActivity() {
         droneEdgeLogsDir().mkdirs()
     }
 
-    private fun dumpUsbDevices() {
-        runCatching {
-            val sb = StringBuilder()
-            val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-            sb.appendLine("=== DroneEdge diagnostics $ts ===")
-            sb.appendLine()
-
-            // ── USB Host devices ──────────────────────────────────────────────
-            sb.appendLine("--- USB Host deviceList ---")
-            val usbManager = getSystemService(USB_SERVICE) as android.hardware.usb.UsbManager
-            val devices = usbManager.deviceList
-            if (devices.isEmpty()) {
-                sb.appendLine("(empty — device may be RNDIS/network or claimed by another app's service)")
-            } else {
-                devices.values.forEach { dev ->
-                    sb.appendLine("Device: ${dev.deviceName}")
-                    sb.appendLine("  vendorId  = 0x%04x (%d)".format(dev.vendorId, dev.vendorId))
-                    sb.appendLine("  productId = 0x%04x (%d)".format(dev.productId, dev.productId))
-                    sb.appendLine("  class     = 0x%02x  subclass = 0x%02x".format(dev.deviceClass, dev.deviceSubclass))
-                    sb.appendLine("  interfaces= ${dev.interfaceCount}")
-                    for (i in 0 until dev.interfaceCount) {
-                        val iface = dev.getInterface(i)
-                        sb.appendLine("    iface[$i] class=0x%02x sub=0x%02x proto=0x%02x endpoints=${iface.endpointCount}"
-                            .format(iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol))
-                    }
-                    sb.appendLine("  hasPermission = ${usbManager.hasPermission(dev)}")
-                    sb.appendLine()
-                }
-            }
-
-            // ── Camera2 devices (external cameras appear here) ────────────────
-            sb.appendLine()
-            sb.appendLine("--- Camera2 camera IDs ---")
-            val camManager = getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-            val camIds = camManager.cameraIdList
-            if (camIds.isEmpty()) {
-                sb.appendLine("(none)")
-            } else {
-                camIds.forEach { id ->
-                    val chars = runCatching { camManager.getCameraCharacteristics(id) }.getOrNull()
-                    val facing = chars?.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
-                    val facingStr = when (facing) {
-                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK  -> "BACK"
-                        android.hardware.camera2.CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL ← possible goggles"
-                        else -> "UNKNOWN($facing)"
-                    }
-                    sb.appendLine("  Camera id=$id  facing=$facingStr")
-                }
-            }
-
-            // ── Network interfaces ────────────────────────────────────────────
-            sb.appendLine()
-            sb.appendLine("--- Network interfaces ---")
-            val netIfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
-            netIfaces.forEach { iface ->
-                val addrs = iface.inetAddresses.toList()
-                    .filter { !it.isLoopbackAddress }
-                    .map { it.hostAddress }
-                if (addrs.isNotEmpty()) {
-                    sb.appendLine("  ${iface.name}: ${addrs.joinToString()}")
-                }
-            }
-
-            File(droneEdgeLogsDir(), "diagnostics.txt").writeText(sb.toString())
-        }
-    }
+    private fun dumpUsbDevices() = writeDiagnostics(this)
 
     companion object {
         fun droneEdgeModelsDir(): File =
@@ -205,5 +139,96 @@ class MainActivity : ComponentActivity() {
 
         fun droneEdgeLogsDir(): File =
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "DroneEdge/logs")
+
+        /** Writes a fresh diagnostics snapshot to diagnostics.txt. Safe to call from any Context. */
+        fun writeDiagnostics(context: Context) {
+            runCatching {
+                val sb = StringBuilder()
+                val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                sb.appendLine("=== DroneEdge diagnostics $ts ===")
+                sb.appendLine()
+
+                // ── USB Host devices ──────────────────────────────────────────────
+                sb.appendLine("--- USB Host deviceList ---")
+                val usbManager = context.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager
+                val devices = usbManager.deviceList
+                if (devices.isEmpty()) {
+                    sb.appendLine("(empty — device may be RNDIS/network or already claimed by another app)")
+                } else {
+                    devices.values.forEach { dev ->
+                        sb.appendLine("Device: ${dev.deviceName}")
+                        sb.appendLine("  vendorId  = 0x%04x (%d)".format(dev.vendorId, dev.vendorId))
+                        sb.appendLine("  productId = 0x%04x (%d)".format(dev.productId, dev.productId))
+                        sb.appendLine("  class     = 0x%02x  subclass = 0x%02x".format(dev.deviceClass, dev.deviceSubclass))
+                        sb.appendLine("  interfaces= ${dev.interfaceCount}")
+                        for (i in 0 until dev.interfaceCount) {
+                            val iface = dev.getInterface(i)
+                            sb.appendLine("    iface[$i] class=0x%02x sub=0x%02x proto=0x%02x endpoints=${iface.endpointCount}"
+                                .format(iface.interfaceClass, iface.interfaceSubclass, iface.interfaceProtocol))
+                        }
+                        sb.appendLine("  hasPermission = ${usbManager.hasPermission(dev)}")
+                        sb.appendLine()
+                    }
+                }
+
+                // ── Camera2 devices ────────────────────────────────────────────────
+                sb.appendLine()
+                sb.appendLine("--- Camera2 camera IDs ---")
+                val camManager = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                val camIds = camManager.cameraIdList
+                if (camIds.isEmpty()) {
+                    sb.appendLine("(none)")
+                } else {
+                    camIds.forEach { id ->
+                        val chars = runCatching { camManager.getCameraCharacteristics(id) }.getOrNull()
+                        val facing = chars?.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                        val facingStr = when (facing) {
+                            android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                            android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK  -> "BACK"
+                            android.hardware.camera2.CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL ← possible goggles"
+                            else -> "UNKNOWN($facing)"
+                        }
+                        sb.appendLine("  Camera id=$id  facing=$facingStr")
+                    }
+                }
+
+                // ── USB Accessories (Goggles 2 / Integra appear here, not in deviceList) ─
+                sb.appendLine()
+                sb.appendLine("--- USB Accessory list ---")
+                val accessories = usbManager.accessoryList
+                if (accessories.isNullOrEmpty()) {
+                    sb.appendLine("(empty)")
+                } else {
+                    accessories.forEach { acc ->
+                        sb.appendLine("Accessory:")
+                        sb.appendLine("  manufacturer = ${acc.manufacturer}")
+                        sb.appendLine("  model        = ${acc.model}")
+                        sb.appendLine("  version      = ${acc.version}")
+                        sb.appendLine("  description  = ${acc.description}")
+                        sb.appendLine("  uri          = ${acc.uri}")
+                        sb.appendLine("  serial       = ${acc.serial}")
+                        sb.appendLine("  hasPermission = ${usbManager.hasPermission(acc)}")
+                    }
+                }
+
+                // ── Network interfaces ─────────────────────────────────────────────
+                sb.appendLine()
+                sb.appendLine("--- Network interfaces (ALL) ---")
+                val netIfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+                netIfaces.forEach { iface ->
+                    val addrs = iface.inetAddresses.toList().map { it.hostAddress }
+                    val tag = when {
+                        iface.name.startsWith("usb")   -> " ← USB RNDIS/ECM"
+                        iface.name.startsWith("rndis") -> " ← RNDIS"
+                        iface.name.startsWith("ecm")   -> " ← ECM"
+                        else -> ""
+                    }
+                    sb.appendLine("  ${iface.name}$tag: ${addrs.ifEmpty { listOf("(no addr)") }.joinToString()}")
+                }
+
+                droneEdgeLogsDir().also { it.mkdirs() }
+                File(droneEdgeLogsDir(), "diagnostics.txt").writeText(sb.toString())
+            }
+        }
     }
 }
