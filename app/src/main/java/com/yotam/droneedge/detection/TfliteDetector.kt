@@ -10,7 +10,6 @@ import android.util.Log
 import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
 import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.Closeable
@@ -183,32 +182,25 @@ class TfliteDetector(
             }
         }
 
-        // 2. GPU via OpenGL ES. Xclipse (Samsung Exynos) may report not-compatible.
-        //    Capture all failure modes so the log shows why we fell to CPU.
-        runCatching {
+        // 2. GPU via OpenGL ES. Skip CompatibilityList — it uses a hardcoded blocklist that
+        //    may falsely exclude newer Samsung/Adreno drivers. Try directly and catch failures.
+        run {
+            val gpu = runCatching { GpuDelegate() }.getOrElse { e ->
+                gpuFailureReason = "gpuNew:${e.message?.take(100) ?: e.javaClass.simpleName}"
+                null
+            } ?: return@run
             model.rewind()
-            val compat = CompatibilityList()
-            val supported = compat.isDelegateSupportedOnThisDevice
-            compat.close()
-            if (!supported) {
-                gpuFailureReason = "CompatibilityList=false"
-                return@runCatching null
-            }
-            val gpu = GpuDelegate()
             runCatching {
                 val opts = Interpreter.Options().apply { addDelegate(gpu) }
                 Interpreter(model, opts) to gpu
-            }.getOrElse { e ->
+            }.onSuccess {
+                Log.i(TAG, "inference: GPU")
+                delegateName = "GPU"
+                return it
+            }.onFailure { e ->
                 gpu.close()
                 gpuFailureReason = "interpInit:${e.message?.take(100) ?: e.javaClass.simpleName}"
-                null
             }
-        }.onFailure { e ->
-            gpuFailureReason = "gpuNew:${e.message?.take(100) ?: e.javaClass.simpleName}"
-        }.getOrNull()?.let {
-            Log.i(TAG, "inference: GPU")
-            delegateName = "GPU"
-            return it
         }
 
         // 3. CPU fallback — 8 threads to use all big/middle cores on Tab S10+
