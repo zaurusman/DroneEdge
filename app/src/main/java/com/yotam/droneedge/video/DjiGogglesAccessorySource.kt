@@ -88,11 +88,14 @@ class DjiGogglesAccessorySource(
 
         // Inference decoder: second pipe + ImageReader at 10fps cap
         val inferPipeOut = PipedOutputStream()
-        val inferPipeIn  = PipedInputStream(inferPipeOut, 1_048_576)
+        val inferPipeIn  = PipedInputStream(inferPipeOut, 8_388_608)
         val inferImageReader = ImageReader.newInstance(1920, 1080, ImageFormat.YUV_420_888, 3)
         val pendingInferenceBitmap = AtomicReference<Bitmap?>(null)
         val lastInferenceMs = AtomicLong(0L)
         val inferHandlerThread = HandlerThread("inference-reader").also { it.start() }
+        val inferYBuf   = ByteArray(1920 * 1080)
+        val inferUBuf   = ByteArray(960 * 540 * 2 + 8)   // generous for stride padding + NV12
+        val inferVBuf   = ByteArray(960 * 540 * 2 + 8)
         inferImageReader.setOnImageAvailableListener({ reader ->
             val now = System.currentTimeMillis()
             if (now - lastInferenceMs.get() < 100L) {
@@ -107,12 +110,15 @@ class DjiGogglesAccessorySource(
                 val yPlane = image.planes[0]
                 val uPlane = image.planes[1]
                 val vPlane = image.planes[2]
-                val yBytes = ByteArray(yPlane.buffer.remaining()).also { yPlane.buffer.get(it) }
-                val uBytes = ByteArray(uPlane.buffer.remaining()).also { uPlane.buffer.get(it) }
-                val vBytes = ByteArray(vPlane.buffer.remaining()).also { vPlane.buffer.get(it) }
+                val yLen = yPlane.buffer.remaining()
+                val uLen = uPlane.buffer.remaining()
+                val vLen = vPlane.buffer.remaining()
+                yPlane.buffer.get(inferYBuf, 0, yLen)
+                uPlane.buffer.get(inferUBuf, 0, uLen)
+                vPlane.buffer.get(inferVBuf, 0, vLen)
                 val pixels = yuv420ToArgbPixels(
-                    yBytes, yPlane.rowStride,
-                    uBytes, vBytes,
+                    inferYBuf, yPlane.rowStride,
+                    inferUBuf, inferVBuf,
                     uPlane.rowStride, uPlane.pixelStride,
                     w, h,
                 )
@@ -183,12 +189,30 @@ class DjiGogglesAccessorySource(
             }
         }
 
+        val inferPipeAlive = java.util.concurrent.atomic.AtomicBoolean(true)
+
         val inferPlayerJob = launch(Dispatchers.Main) {
             val loadControl = DefaultLoadControl.Builder()
                 .setBufferDurationsMs(200, 400, 50, 100)
                 .build()
             val inferPlayer = ExoPlayer.Builder(context).setLoadControl(loadControl).build()
             inferPlayer.setVideoSurface(inferImageReader.surface)
+            inferPlayer.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    val name = when (state) {
+                        androidx.media3.common.Player.STATE_IDLE      -> "IDLE"
+                        androidx.media3.common.Player.STATE_BUFFERING -> "BUFFERING"
+                        androidx.media3.common.Player.STATE_READY     -> "READY"
+                        androidx.media3.common.Player.STATE_ENDED     -> "ENDED"
+                        else -> "UNKNOWN($state)"
+                    }
+                    log?.println("InferenceDecoder state → $name")
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    log?.println("InferenceDecoder ERROR: ${error.errorCodeName} — ${error.message}")
+                    inferPipeAlive.set(false)
+                }
+            })
             val dsFactory: DataSource.Factory = DataSource.Factory { PipeDataSource(inferPipeIn) }
             val exFactory: ExtractorsFactory  = ExtractorsFactory { arrayOf(RawH264Extractor()) }
             val inferSource = ProgressiveMediaSource.Factory(dsFactory, exFactory)
@@ -204,8 +228,6 @@ class DjiGogglesAccessorySource(
                 log?.println("InferenceDecoder ExoPlayer released")
             }
         }
-
-        var inferPipeAlive = true
 
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
@@ -265,11 +287,11 @@ class DjiGogglesAccessorySource(
                     if (port == VIDEO_IN && length > 0) {
                         h264PipeOut.write(data, i + HEADER_SIZE, length)
                         h264PipeOut.flush()
-                        if (inferPipeAlive) runCatching {
+                        if (inferPipeAlive.get()) runCatching {
                             inferPipeOut.write(data, i + HEADER_SIZE, length)
                             inferPipeOut.flush()
                         }.onFailure {
-                            inferPipeAlive = false
+                            inferPipeAlive.set(false)
                             log?.println("InferenceDecoder pipe broken: ${it.message}")
                         }
                         videoBytes += length

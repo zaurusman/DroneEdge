@@ -87,4 +87,24 @@ class YuvConversionTest {
         val pixels = yuv420ToArgbPixels(yBytes, 2, uBytes, vBytes, 1, 1, 2, 2)
         assertEquals(4, pixels.size)
     }
+
+    @Test
+    fun yuv420NV12SemiPlanarPathDecodesCorrectly() {
+        // 2×2 frame using NV12 semi-planar layout (uvPixelStride=2).
+        // In NV12, uBytes and vBytes point into the same interleaved buffer but offset by 1.
+        // uvRowStride=2, uvPixelStride=2: uBytes=[U0, V0], vBytes=[V0, U0] (second byte of same pair).
+        // Use black (Y=16, U=128, V=128) — chrominance doesn't change for achromatic colours.
+        val yBytes = byteArrayOf(16, 16, 16, 16)
+        // NV12 interleaved UV: [U0=128, V0=128]
+        val uBytes = byteArrayOf(128.toByte(), 128.toByte())   // U at [0], [2], ...
+        val vBytes = byteArrayOf(128.toByte(), 128.toByte())   // V at [1], [3], ... (overlapping)
+        // uvRowStride=2, uvPixelStride=2
+        val pixels = yuv420ToArgbPixels(yBytes, 2, uBytes, vBytes, 2, 2, 2, 2)
+        pixels.forEach { pixel ->
+            assertEquals("alpha NV12", 0xFF, (pixel ushr 24) and 0xFF)
+            assertEquals("R NV12", 0, (pixel shr 16) and 0xFF)
+            assertEquals("G NV12", 0, (pixel shr 8) and 0xFF)
+            assertEquals("B NV12", 0, pixel and 0xFF)
+        }
+    }
 }
