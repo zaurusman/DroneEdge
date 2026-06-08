@@ -95,9 +95,9 @@ class TfliteDetector(
         scalingCanvas = Canvas(scaledBitmap)
         dstRect.set(0, 0, inputWidth, inputHeight)
 
-        // Write delegate info to a file the user can pull off the device without ADB.
+        // Write delegate info to the public logs folder so it's visible on the USB drive.
         runCatching {
-            val logDir = context.getExternalFilesDir("logs")?.also { it.mkdirs() } ?: return@runCatching
+            val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
             val sb = StringBuilder()
             sb.appendLine("model=$modelFileName")
             sb.appendLine("delegate=$delegateName")
