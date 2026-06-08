@@ -47,4 +47,44 @@ class YuvConversionTest {
         // NV12 total size = width * height * 3 / 2
         assertEquals(4 * 2 * 3 / 2, nv12.size)
     }
+
+    @Test
+    fun yuv420BlackFrameDecodesCorrectly() {
+        // 2×2 all-black frame: Y=16, U=128, V=128 (BT.601 black level)
+        // yRowStride=2, uvRowStride=1, uvPixelStride=1 (I420 planar)
+        val yBytes = byteArrayOf(16, 16, 16, 16)
+        val uBytes = byteArrayOf(128.toByte())
+        val vBytes = byteArrayOf(128.toByte())
+        val pixels = yuv420ToArgbPixels(yBytes, 2, uBytes, vBytes, 1, 1, 2, 2)
+        pixels.forEach { pixel ->
+            assertEquals("alpha", 0xFF, (pixel ushr 24) and 0xFF)
+            assertEquals("R", 0, (pixel shr 16) and 0xFF)
+            assertEquals("G", 0, (pixel shr 8) and 0xFF)
+            assertEquals("B", 0, pixel and 0xFF)
+        }
+    }
+
+    @Test
+    fun yuv420WhiteFrameDecodesCorrectly() {
+        // 2×2 all-white frame: Y=235, U=128, V=128
+        val yBytes = byteArrayOf(235.toByte(), 235.toByte(), 235.toByte(), 235.toByte())
+        val uBytes = byteArrayOf(128.toByte())
+        val vBytes = byteArrayOf(128.toByte())
+        val pixels = yuv420ToArgbPixels(yBytes, 2, uBytes, vBytes, 1, 1, 2, 2)
+        pixels.forEach { pixel ->
+            assertEquals("alpha", 0xFF, (pixel ushr 24) and 0xFF)
+            assertEquals("R", 255, (pixel shr 16) and 0xFF)
+            assertEquals("G", 255, (pixel shr 8) and 0xFF)
+            assertEquals("B", 255, pixel and 0xFF)
+        }
+    }
+
+    @Test
+    fun yuv420OutputSizeIsWidthTimesHeight() {
+        val yBytes = ByteArray(4) { 16 }
+        val uBytes = ByteArray(1) { 128.toByte() }
+        val vBytes = ByteArray(1) { 128.toByte() }
+        val pixels = yuv420ToArgbPixels(yBytes, 2, uBytes, vBytes, 1, 1, 2, 2)
+        assertEquals(4, pixels.size)
+    }
 }

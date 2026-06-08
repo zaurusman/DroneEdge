@@ -109,3 +109,34 @@ fun nv12FromPixels(pixels: IntArray, width: Int, height: Int): ByteArray {
     }
     return nv12
 }
+
+/**
+ * Converts YUV_420_888 image plane data to packed ARGB pixels (alpha=255).
+ *
+ * Handles both I420 planar (uvPixelStride=1) and NV12 semi-planar (uvPixelStride=2) layouts.
+ * BT.601 limited-range coefficients.
+ *
+ * Parameters match android.media.Image.Plane values so the caller can extract bytes
+ * and call this without an Android dependency in the function itself.
+ */
+fun yuv420ToArgbPixels(
+    yBytes: ByteArray, yRowStride: Int,
+    uBytes: ByteArray, vBytes: ByteArray,
+    uvRowStride: Int, uvPixelStride: Int,
+    width: Int, height: Int,
+): IntArray {
+    val pixels = IntArray(width * height)
+    for (row in 0 until height) {
+        for (col in 0 until width) {
+            val y = (yBytes[row * yRowStride + col].toInt() and 0xFF) - 16
+            val uvIdx = (row / 2) * uvRowStride + (col / 2) * uvPixelStride
+            val u = (uBytes[uvIdx].toInt() and 0xFF) - 128
+            val v = (vBytes[uvIdx].toInt() and 0xFF) - 128
+            val r = ((298 * y + 409 * v + 128) shr 8).coerceIn(0, 255)
+            val g = ((298 * y - 100 * u - 208 * v + 128) shr 8).coerceIn(0, 255)
+            val b = ((298 * y + 516 * u + 128) shr 8).coerceIn(0, 255)
+            pixels[row * width + col] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+    }
+    return pixels
+}
