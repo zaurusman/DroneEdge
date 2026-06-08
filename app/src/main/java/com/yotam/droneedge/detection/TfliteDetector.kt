@@ -37,6 +37,7 @@ class TfliteDetector(
     private val labelsFileName: String = "labelmap.txt",
     var confidenceThreshold: Float = 0.5f,
     modelFile: File? = null,
+    private val skipNnapi: Boolean = false,
 ) : Detector, Closeable {
 
     private val delegate: Closeable?   // NnApiDelegate or GpuDelegate; null = CPU
@@ -121,8 +122,9 @@ class TfliteDetector(
      * The winning delegate is stored so it can be closed when the detector is closed.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI — available API 28+ (our minSdk), routes to Qualcomm Hexagon DSP/NPU
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        // 1. NNAPI — available API 28+. Skipped for FP32 dynamic-range models (dequantize ops
+        //    cause NNAPI to shuttle tensors between DSP and CPU, often slower than GPU).
+        if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching {
                 model.rewind()
                 val nnApi = NnApiDelegate()

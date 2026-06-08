@@ -333,7 +333,11 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 if (context == null) return
                 viewModelScope.launch(Dispatchers.IO) {
                     try {
-                        val tfd = TfliteDetector(context.applicationContext, modelFileName = "north_20260419.tflite")
+                        val tfd = TfliteDetector(
+                            context.applicationContext,
+                            modelFileName = "north_20260419.tflite",
+                            skipNnapi = true,
+                        )
                         tfliteDetector?.close()
                         tfliteDetector = tfd
                         detector = tfd

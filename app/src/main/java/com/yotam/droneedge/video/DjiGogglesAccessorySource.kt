@@ -6,7 +6,7 @@ import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.view.PixelCopy
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
@@ -94,9 +94,11 @@ class DjiGogglesAccessorySource(
         // guaranteed across Android devices/drivers.
         val pendingInferenceBitmap = AtomicReference<Bitmap?>(null)
         var pixelCopyCount = 0L
-        val pixelCopyJob = if (renderSurface != null) launch(Dispatchers.Main) {
+        val pixelCopyJob = if (renderSurface != null) launch(Dispatchers.IO) {
+            val handlerThread = HandlerThread("pixelcopy-infer")
+            handlerThread.start()
+            val handler = Handler(handlerThread.looper)
             val inferBitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
-            val handler = Handler(Looper.getMainLooper())
             try {
                 while (isActive) {
                     delay(100L)
@@ -123,6 +125,7 @@ class DjiGogglesAccessorySource(
             } finally {
                 inferBitmap.recycle()
                 pendingInferenceBitmap.getAndSet(null)?.recycle()
+                handlerThread.quitSafely()
             }
         } else null
 
