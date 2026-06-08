@@ -22,11 +22,14 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -115,8 +118,9 @@ fun LiveScreen(
     val previewFps      by vm.previewFps.collectAsStateWithLifecycle()
     val inferenceFps    by vm.inferenceFps.collectAsStateWithLifecycle()
     val videoUri        by vm.videoUri.collectAsStateWithLifecycle()
-    val detectorMode    by vm.detectorMode.collectAsStateWithLifecycle()
-    val activeModelFile by vm.activeModelFile.collectAsStateWithLifecycle()
+    val detectorMode          by vm.detectorMode.collectAsStateWithLifecycle()
+    val activeModelFile       by vm.activeModelFile.collectAsStateWithLifecycle()
+    val confidenceThreshold   by vm.confidenceThreshold.collectAsStateWithLifecycle()
     val error           by vm.error.collectAsStateWithLifecycle()
     val recordingState   by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording    by vm.lastRecording.collectAsStateWithLifecycle()
@@ -355,7 +359,7 @@ fun LiveScreen(
             )
         }
 
-        // ── HUD top-right: FPS ────────────────────────────────────────────────
+        // ── HUD top-right: FPS + confidence tuning ───────────────────────────
         Column(
             modifier            = Modifier
                 .align(Alignment.TopEnd)
@@ -371,10 +375,34 @@ fun LiveScreen(
                 letterSpacing = 1.sp,
             )
             Text(
-                text  = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
-                color = hudColor,
+                text     = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
+                color    = hudColor,
                 fontSize = 11.sp,
             )
+            if (detectorMode == DetectorMode.TFLITE || detectorMode == DetectorMode.NORTH) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text     = "CONF ${"%.2f".format(confidenceThreshold)}",
+                        color    = hudColor,
+                        fontSize = 9.sp,
+                        letterSpacing = 0.5.sp,
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text     = "−",
+                        color    = FieldAccent,
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable { vm.setConfidenceThreshold(confidenceThreshold - 0.05f) },
+                    )
+                    Text(
+                        text     = "+",
+                        color    = FieldAccent,
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable { vm.setConfidenceThreshold(confidenceThreshold + 0.05f) },
+                    )
+                }
+            }
         }
 
         // ── Bottom bar ────────────────────────────────────────────────────────

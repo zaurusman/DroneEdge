@@ -84,6 +84,16 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeModelFile = MutableStateFlow<File?>(null)
     val activeModelFile: StateFlow<File?> = _activeModelFile.asStateFlow()
 
+    // ── Confidence threshold (applies to active TFLite detector) ─────────────
+    private val _confidenceThreshold = MutableStateFlow(0.5f)
+    val confidenceThreshold: StateFlow<Float> = _confidenceThreshold.asStateFlow()
+
+    fun setConfidenceThreshold(value: Float) {
+        val clamped = value.coerceIn(0.05f, 0.95f)
+        _confidenceThreshold.value = clamped
+        tfliteDetector?.confidenceThreshold = clamped
+    }
+
     // ── Error message (null = no error) ───────────────────────────────────────
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
@@ -292,6 +302,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 detector = object : Detector { override suspend fun detect(frame: VideoFrame) = emptyList<Detection>() }
                 _detectorMode.value = DetectorMode.NO_MODEL
                 _activeModelFile.value = null
+                _confidenceThreshold.value = 0.5f
                 _error.value = null
             }
             DetectorMode.FAKE -> {

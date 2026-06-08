@@ -35,7 +35,7 @@ class TfliteDetector(
     context: Context,
     private val modelFileName: String = "detect.tflite",
     private val labelsFileName: String = "labelmap.txt",
-    val confidenceThreshold: Float = 0.5f,
+    var confidenceThreshold: Float = 0.5f,
     modelFile: File? = null,
 ) : Detector, Closeable {
 
