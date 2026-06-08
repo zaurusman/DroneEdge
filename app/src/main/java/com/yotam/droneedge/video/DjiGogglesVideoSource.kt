@@ -214,8 +214,12 @@ class DjiGogglesVideoSource(
 
         /** DJI USB vendor ID (0x2CA3 = 11427). */
         const val VENDOR_ID  = 0x2CA3
-        /** DJI Goggles 2 / Integra product ID (0x001F = 31), confirmed by voc-poc project. */
+        /** Known DJI Goggles 2 / Integra product ID (0x001F = 31). May differ by firmware. */
         const val PRODUCT_ID = 0x001F
+
+        /** Returns true for any DJI USB device, regardless of product ID. */
+        fun isDjiDevice(device: android.hardware.usb.UsbDevice): Boolean =
+            device.vendorId == VENDOR_ID
 
         // voc-poc / DigiView-Android protocol constants
         private val MAGIC_PACKET       = "RMVT".toByteArray()

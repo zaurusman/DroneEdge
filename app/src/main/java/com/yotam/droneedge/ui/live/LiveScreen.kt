@@ -91,8 +91,19 @@ import com.droneedge.app.video.VideoFrame
 import com.droneedge.app.video.DjiGogglesVideoSource
 
 private const val ACTION_USB_PERMISSION = "com.droneedge.app.USB_PERMISSION"
-private const val DJI_VENDOR_ID  = DjiGogglesVideoSource.VENDOR_ID
-private const val DJI_PRODUCT_ID = DjiGogglesVideoSource.PRODUCT_ID
+private const val DJI_VENDOR_ID = DjiGogglesVideoSource.VENDOR_ID  // kept for reference
+
+private fun usbPermissionIntent(context: Context): PendingIntent {
+    // Android 14+ (targetSdk 34+): FLAG_MUTABLE requires an explicit intent (package must be set).
+    // Android 12-13: FLAG_MUTABLE required so USB manager can fill in EXTRA_DEVICE extras.
+    // Below API 31: no mutability flag needed.
+    val intent = Intent(ACTION_USB_PERMISSION).setPackage(context.packageName)
+    val flags = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    else
+        PendingIntent.FLAG_UPDATE_CURRENT
+    return PendingIntent.getBroadcast(context, 0, intent, flags)
+}
 
 @Composable
 fun LiveScreen(
@@ -114,6 +125,7 @@ fun LiveScreen(
     val usbDevice        by vm.usbDevice.collectAsStateWithLifecycle()
     val cameraFacing    by vm.cameraFacing.collectAsStateWithLifecycle()
     val djiDevice       by vm.djiDevice.collectAsStateWithLifecycle()
+    val djiAccessory    by vm.djiAccessory.collectAsStateWithLifecycle()
 
     val context        = LocalContext.current
     val lifecycleOwner by rememberUpdatedState(LocalLifecycleOwner.current)
@@ -136,20 +148,24 @@ fun LiveScreen(
         }
     }
 
-    // Detect USB devices already connected when LiveScreen first appears.
-    // ACTION_USB_DEVICE_ATTACHED fires only once; if it arrived before this
-    // screen was visible the BroadcastReceiver missed it.
+    // Detect USB devices/accessories already connected when LiveScreen first appears.
+    // USB_ATTACHED events fire only once; if they arrived before this screen was
+    // visible the BroadcastReceiver missed them.
     LaunchedEffect(Unit) {
         if (sessionState != SessionState.IDLE) return@LaunchedEffect
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val permIntent = PendingIntent.getBroadcast(
-            context, 0,
-            Intent(ACTION_USB_PERMISSION),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val permIntent = usbPermissionIntent(context)
+
+        // USB Accessory mode (Goggles 2 / Integra)
+        usbManager.accessoryList?.forEach { acc ->
+            if (usbManager.hasPermission(acc)) vm.useDjiAccessorySource(acc, context)
+            else usbManager.requestPermission(acc, permIntent)
+        }
+
+        // USB Host mode (FPV V1/V2 or UVC cameras)
         usbManager.deviceList.values.forEach { device ->
             if (usbManager.hasPermission(device)) {
-                if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) vm.useDjiSource(device, context)
+                if (DjiGogglesVideoSource.isDjiDevice(device)) vm.useDjiSource(device, context)
                 else vm.useUsbSource(device, context)
             } else {
                 usbManager.requestPermission(device, permIntent)
@@ -184,38 +200,57 @@ fun LiveScreen(
 
     DisposableEffect(Unit) {
         val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-        val permIntent = PendingIntent.getBroadcast(
-            context, 0,
-            Intent(ACTION_USB_PERMISSION),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
+        val permIntent = usbPermissionIntent(context)
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
+                // Extract USB device (host mode) or accessory (accessory mode)
                 val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
                 } else {
                     @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                } ?: return
+                    intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                }
+                val accessory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, android.hardware.usb.UsbAccessory::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<android.hardware.usb.UsbAccessory>(UsbManager.EXTRA_ACCESSORY)
+                }
+
                 when (intent.action) {
+                    UsbManager.ACTION_USB_ACCESSORY_ATTACHED -> {
+                        val acc = accessory ?: usbManager.accessoryList?.firstOrNull() ?: return
+                        com.droneedge.app.MainActivity.writeDiagnostics(ctx)
+                        if (usbManager.hasPermission(acc)) vm.useDjiAccessorySource(acc, ctx)
+                        else usbManager.requestPermission(acc, permIntent)
+                    }
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                        if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) {
-                            if (usbManager.hasPermission(device)) vm.useDjiSource(device, ctx)
-                            else usbManager.requestPermission(device, permIntent)
+                        val dev = device ?: return
+                        if (DjiGogglesVideoSource.isDjiDevice(dev)) {
+                            if (usbManager.hasPermission(dev)) vm.useDjiSource(dev, ctx)
+                            else usbManager.requestPermission(dev, permIntent)
                         } else {
-                            if (usbManager.hasPermission(device)) vm.useUsbSource(device, ctx)
-                            else usbManager.requestPermission(device, permIntent)
+                            if (usbManager.hasPermission(dev)) vm.useUsbSource(dev, ctx)
+                            else usbManager.requestPermission(dev, permIntent)
                         }
                     }
                     ACTION_USB_PERMISSION -> {
                         val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                        if (granted) {
-                            if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) vm.useDjiSource(device, ctx)
+                        if (!granted) return
+                        if (accessory != null) {
+                            vm.useDjiAccessorySource(accessory, ctx)
+                        } else if (device != null) {
+                            if (DjiGogglesVideoSource.isDjiDevice(device)) vm.useDjiSource(device, ctx)
                             else vm.useUsbSource(device, ctx)
                         }
                     }
+                    UsbManager.ACTION_USB_ACCESSORY_DETACHED -> {
+                        vm.reportError(currentStrings.djiDisconnected)
+                        vm.clearDjiAccessorySource()
+                    }
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                        if (device.vendorId == DJI_VENDOR_ID && device.productId == DJI_PRODUCT_ID) {
+                        val dev = device ?: return
+                        if (DjiGogglesVideoSource.isDjiDevice(dev)) {
                             vm.reportError(currentStrings.djiDisconnected)
                             vm.clearDjiSource()
                         } else {
@@ -227,6 +262,8 @@ fun LiveScreen(
             }
         }
         val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_ACCESSORY_ATTACHED)
+            addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
             addAction(ACTION_USB_PERMISSION)
@@ -239,14 +276,14 @@ fun LiveScreen(
 
     // Derived labels
     val activeSourceChoice: SourceChoice? = when {
-        djiDevice    != null -> SourceChoice.DJI
+        djiDevice != null || djiAccessory != null -> SourceChoice.DJI
         usbDevice    != null -> SourceChoice.USB
         cameraFacing != null -> SourceChoice.CAMERA
         videoUri     != null -> SourceChoice.FILE
         else                 -> null
     }
     val sourceLabel = when {
-        djiDevice    != null -> "DJI"
+        djiDevice != null || djiAccessory != null -> "DJI"
         usbDevice    != null -> "USB"
         cameraFacing != null -> strings.sourceCamera
         videoUri     != null -> strings.sourceFile
@@ -265,7 +302,11 @@ fun LiveScreen(
                 isPlaying = sessionState == SessionState.RUNNING,
                 modifier  = Modifier.fillMaxSize(),
             )
-            cameraFacing != null || djiDevice != null -> CameraFrameDisplay(
+            djiDevice != null || djiAccessory != null -> DjiSurfaceView(
+                modifier  = Modifier.fillMaxSize(),
+                onSurface = { vm.setDjiSurface(it) },
+            )
+            cameraFacing != null -> CameraFrameDisplay(
                 frames   = vm.latestFrame,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -413,35 +454,34 @@ fun LiveScreen(
                             } else if (usbManager.hasPermission(uvcDevice)) {
                                 vm.useUsbSource(uvcDevice, context)
                             } else {
-                                usbManager.requestPermission(
-                                    uvcDevice,
-                                    PendingIntent.getBroadcast(
-                                        context, 0,
-                                        Intent(ACTION_USB_PERMISSION),
-                                        PendingIntent.FLAG_IMMUTABLE,
-                                    ),
-                                )
+                                usbManager.requestPermission(uvcDevice, usbPermissionIntent(context))
                             }
                         }
                         SourceChoice.DJI -> {
                             val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-                            val djiDev = usbManager.deviceList.values.firstOrNull { dev ->
-                                dev.vendorId == DJI_VENDOR_ID && dev.productId == DJI_PRODUCT_ID
+                            // Check USB Accessory mode first (Goggles 2 / Integra: DJI is USB host)
+                            val djiAcc = usbManager.accessoryList?.firstOrNull {
+                                com.droneedge.app.video.DjiGogglesAccessorySource.isDjiAccessory(it)
                             }
+                            // Fallback: USB Host mode (FPV V1/V2)
+                            val djiDev = if (djiAcc == null) usbManager.deviceList.values.firstOrNull { dev ->
+                                DjiGogglesVideoSource.isDjiDevice(dev)
+                            } else null
+
                             when {
-                                djiDev == null ->
-                                    vm.reportError(strings.noDjiGoggles)
-                                usbManager.hasPermission(djiDev) ->
+                                djiAcc != null && usbManager.hasPermission(djiAcc) ->
+                                    vm.useDjiAccessorySource(djiAcc, context)
+                                djiAcc != null ->
+                                    usbManager.requestPermission(djiAcc, usbPermissionIntent(context))
+                                djiDev != null && usbManager.hasPermission(djiDev) ->
                                     vm.useDjiSource(djiDev, context)
-                                else ->
-                                    usbManager.requestPermission(
-                                        djiDev,
-                                        PendingIntent.getBroadcast(
-                                            context, 0,
-                                            Intent(ACTION_USB_PERMISSION),
-                                            PendingIntent.FLAG_IMMUTABLE,
-                                        ),
-                                    )
+                                djiDev != null ->
+                                    usbManager.requestPermission(djiDev, usbPermissionIntent(context))
+                                else -> {
+                                    // Nothing found — write fresh diagnostics for debugging
+                                    com.droneedge.app.MainActivity.writeDiagnostics(context)
+                                    vm.reportError(strings.noDjiGoggles)
+                                }
                             }
                         }
                         SourceChoice.FILE -> filePicker.launch("video/*")
@@ -589,6 +629,27 @@ private fun RecButton(
             border   = androidx.compose.foundation.BorderStroke(1.dp, FieldBorder),
         ) { Text(strings.saving, fontSize = 12.sp) }
     }
+}
+
+// ── DJI Surface view — MediaCodec renders H.264 directly to GPU, no CPU copy ──
+
+@Composable
+private fun DjiSurfaceView(
+    modifier: Modifier = Modifier,
+    onSurface: (android.view.Surface?) -> Unit,
+) {
+    AndroidView(
+        modifier = modifier,
+        factory  = { ctx ->
+            android.view.SurfaceView(ctx).apply {
+                holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: android.view.SurfaceHolder) = onSurface(holder.surface)
+                    override fun surfaceChanged(holder: android.view.SurfaceHolder, fmt: Int, w: Int, h: Int) {}
+                    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) = onSurface(null)
+                })
+            }
+        },
+    )
 }
 
 // ── Video player ──────────────────────────────────────────────────────────────
