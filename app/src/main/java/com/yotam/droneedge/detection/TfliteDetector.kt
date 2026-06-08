@@ -50,6 +50,7 @@ class TfliteDetector(
 
     var delegateName: String = "CPU"
         private set
+    private var gpuFailureReason: String? = null
     val modelInfo: String get() = "$delegateName ${inputWidth}×${inputHeight}"
 
     // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
@@ -93,6 +94,22 @@ class TfliteDetector(
         scaledBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
         scalingCanvas = Canvas(scaledBitmap)
         dstRect.set(0, 0, inputWidth, inputHeight)
+
+        // Write delegate info to a file the user can pull off the device without ADB.
+        runCatching {
+            val logDir = context.getExternalFilesDir("logs")?.also { it.mkdirs() } ?: return@runCatching
+            val sb = StringBuilder()
+            sb.appendLine("model=$modelFileName")
+            sb.appendLine("delegate=$delegateName")
+            sb.appendLine("input=${inputWidth}x${inputHeight} $inputDataType")
+            sb.appendLine("outputTensors=${interpreter.outputTensorCount}")
+            for (i in 0 until interpreter.outputTensorCount) {
+                val t = interpreter.getOutputTensor(i)
+                sb.appendLine("  output[$i] shape=${t.shape().toList()} dtype=${t.dataType()}")
+            }
+            gpuFailureReason?.let { sb.appendLine("gpuError=$it") }
+            File(logDir, "tflite_delegate.txt").writeText(sb.toString())
+        }
     }
 
     override suspend fun detect(frame: VideoFrame): List<Detection> {
@@ -155,7 +172,8 @@ class TfliteDetector(
                 Interpreter(model, opts) to gpu
             }.getOrElse { e ->
                 gpu.close()
-                Log.w(TAG, "GPU interpreter init failed: ${e.message}")
+                gpuFailureReason = e.message ?: e.javaClass.simpleName
+                Log.w(TAG, "GPU interpreter init failed: $gpuFailureReason")
                 null
             }
         }.getOrNull()?.let {
