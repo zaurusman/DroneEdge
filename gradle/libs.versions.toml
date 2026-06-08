@@ -11,7 +11,7 @@ composeBom = "2026.05.01"
 media3 = "1.4.1"
 coroutinesTest = "1.9.0"
 # TensorFlow Lite — object detection inference engine
-tflite = "2.14.0"
+tflite = "2.16.1"
 tfliteSupport = "0.4.4"
 # CameraX — device camera access via ImageAnalysis
 camerax = "1.4.2"
