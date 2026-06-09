@@ -161,7 +161,7 @@ class TfliteDetector(
                 return it
             }.onFailure { e ->
                 gpu.close()
-                gpuFailureReason = "interpInit:${e.message?.take(100) ?: e.javaClass.simpleName}"
+                gpuFailureReason = "interpInit:${e.message?.take(400) ?: e.javaClass.simpleName}"
             }
         }
 
