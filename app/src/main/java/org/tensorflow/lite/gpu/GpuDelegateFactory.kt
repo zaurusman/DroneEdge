@@ -13,7 +13,7 @@ package org.tensorflow.lite.gpu
  */
 open class GpuDelegateFactory {
     open class Options {
-        open fun isPrecisionLossAllowed(): Boolean = false
+        open fun isPrecisionLossAllowed(): Boolean = true   // FP16 mode — required for FP16-quantized models
         open fun areQuantizedModelsAllowed(): Boolean = true
         open fun getInferencePreference(): Int = 1    // FAST_SINGLE_ANSWER
         open fun getSerializationDir(): String? = null
