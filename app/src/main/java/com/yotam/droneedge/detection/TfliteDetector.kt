@@ -5,13 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
-import android.os.Build
 import android.util.Log
 import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
-import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
@@ -32,12 +30,16 @@ import java.nio.channels.FileChannel
  */
 class TfliteDetector(
     context: Context,
-    private val modelFileName: String = "detect.tflite",
+    modelFileName: String = "detect.tflite",
     private val labelsFileName: String = "labelmap.txt",
     var confidenceThreshold: Float = 0.5f,
     modelFile: File? = null,
-    private val skipNnapi: Boolean = false,
 ) : Detector, Closeable {
+
+    private val appContext: Context = context.applicationContext
+
+    // Use the actual file name from disk when loading externally; fall back to asset name.
+    private val modelFileName: String = modelFile?.name ?: modelFileName
 
     private val delegate: Closeable?   // NnApiDelegate or GpuDelegate; null = CPU
     private val interpreter: Interpreter
@@ -50,8 +52,11 @@ class TfliteDetector(
     var delegateName: String = "CPU"
         private set
     private var gpuFailureReason: String? = null
-    private var nnApiFailureReason: String? = null
     val modelInfo: String get() = "$delegateName ${inputWidth}×${inputHeight}"
+
+    // Inference timing for the first 20 frames, written once to tflite_timing.txt.
+    private var inferenceCount = 0
+    private val timingLines = mutableListOf<String>()
 
     // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
     private val inputBuffer: ByteBuffer
@@ -96,15 +101,15 @@ class TfliteDetector(
         dstRect.set(0, 0, inputWidth, inputHeight)
 
         // Write delegate info to the public logs folder so it's visible on the USB drive.
-        // Only use values already computed in init — no interpreter queries here.
+        // Values are escaped (newlines → <NL>) so each log entry is exactly one line.
         runCatching {
             val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
             val lines = buildList {
+                add("build=v9-flex-gpu")  // bump this tag each new APK so we know which one ran
                 add("model=$modelFileName")
                 add("delegate=$delegateName")
                 add("input=${inputWidth}x${inputHeight} $inputDataType")
-                nnApiFailureReason?.let { add("nnApiError=$it") }
-                gpuFailureReason?.let { add("gpuError=$it") }
+                gpuFailureReason?.let { add("gpuError=${it.replace("\n", "<NL>")}") }
             }
             File(logDir, "tflite_delegate.txt").printWriter().use { pw ->
                 lines.forEach { pw.println(it) }
@@ -121,9 +126,27 @@ class TfliteDetector(
             outputs.forEachIndexed { i, o -> map[i] = o }
         }
 
+        val t0 = android.os.SystemClock.elapsedRealtime()
         interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputMap)
+        recordTiming(android.os.SystemClock.elapsedRealtime() - t0)
 
         return outputParser.parse(outputs, labels, confidenceThreshold)
+    }
+
+    private fun recordTiming(ms: Long) {
+        val n = ++inferenceCount
+        if (n <= 20) {
+            timingLines += "[${n}] ${ms}ms"
+        }
+        // Write after every 5th inference (overwrite), so data exists even for short runs.
+        if (n % 5 == 0 || n == 1) {
+            runCatching {
+                val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+                File(logDir, "tflite_timing.txt").writeText(
+                    "delegate=$delegateName  n=$n\n${timingLines.joinToString("\n")}\n"
+                )
+            }
+        }
     }
 
     override fun close() {
@@ -135,58 +158,46 @@ class TfliteDetector(
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Tries delegates in priority order:
-     *   1. GPU    — Adreno via OpenGL ES. CompatibilityList skipped (hardcoded blocklist can
-     *              falsely exclude newer drivers). Best for FP32 dynamic-range-quantized models.
-     *   2. NNAPI  — Samsung ONE DSP / Qualcomm Hexagon. Skipped when skipNnapi=true.
-     *              Plain only — FP16 fails on dynamic-range models (INT8 filter type mismatch).
-     *   3. CPU    — 8 threads (always works)
-     *
-     * Sets delegateName, gpuFailureReason, nnApiFailureReason for diagnostics.
+     * Builds the interpreter, mirroring the proven Sirena setup:
+     *   1. GPU delegate — the fast path on Adreno 750 / Mali. The standard org.tensorflow
+     *      tensorflow-lite-gpu artifact bundles the real libtensorflowlite_gpu_jni.so (unlike
+     *      the LiteRT 1.0.1 stub that failed). With tensorflow-lite-select-tf-ops on the
+     *      classpath, the Flex delegate auto-loads (via reflection in NativeInterpreterWrapper)
+     *      to run any ops the GPU/builtin op set can't — this is what lets the YOLO model
+     *      run on GPU without op-unsupported failures.
+     *   2. CPU fallback — multi-threaded (used on emulators with no usable GPU, and as a
+     *      safety net if GPU init throws). Flex still auto-loads here too.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. GPU — try unconditionally; Adreno 750 handles FP32 YOLO well.
+        // 1. GPU delegate. Allow FP16 precision + quantized models so FP16-quantized weights work.
         run {
-            val gpu = runCatching { GpuDelegate() }.getOrElse { e ->
-                gpuFailureReason = "gpuNew:${e.message?.take(100) ?: e.javaClass.simpleName}"
+            val gpu = runCatching {
+                GpuDelegate(GpuDelegate.Options().apply {
+                    setPrecisionLossAllowed(true)
+                    setQuantizedModelsAllowed(true)
+                })
+            }.getOrElse { e ->
+                gpuFailureReason = "gpuNew:${e.message?.take(120) ?: e.javaClass.simpleName}"
                 null
             } ?: return@run
             model.rewind()
             runCatching {
-                val opts = Interpreter.Options().apply { addDelegate(gpu) }
-                Interpreter(model, opts) to gpu
+                Interpreter(model, Interpreter.Options().apply { addDelegate(gpu) }) to gpu
             }.onSuccess {
                 Log.i(TAG, "inference: GPU")
                 delegateName = "GPU"
                 return it
             }.onFailure { e ->
                 gpu.close()
-                gpuFailureReason = "interpInit:${e.message?.take(400) ?: e.javaClass.simpleName}"
+                gpuFailureReason = "interpInit:${e.message?.take(300) ?: e.javaClass.simpleName}"
             }
         }
 
-        // 2. NNAPI — plain only (FP16 fails: INT8 filter type mismatch in dynamic-range model).
-        if (!skipNnapi && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching {
-                model.rewind()
-                val nnApi = NnApiDelegate()
-                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
-                Interpreter(model, opts) to nnApi
-            }.onSuccess {
-                Log.i(TAG, "inference: NNAPI")
-                delegateName = "NNAPI"
-                return it
-            }.onFailure { e ->
-                nnApiFailureReason = e.message?.take(120) ?: e.javaClass.simpleName
-                Log.w(TAG, "NNAPI unavailable: ${e.message}")
-            }
-        }
-
-        // 3. CPU fallback — 8 threads
+        // 2. CPU fallback — 4 threads (balances throughput vs thermal on the tablet).
         model.rewind()
-        Log.i(TAG, "inference: CPU (8 threads)")
+        Log.i(TAG, "inference: CPU (4 threads)")
         delegateName = "CPU"
-        return Interpreter(model, Interpreter.Options().apply { numThreads = 8 }) to null
+        return Interpreter(model, Interpreter.Options().apply { numThreads = 4 }) to null
     }
 
     /**

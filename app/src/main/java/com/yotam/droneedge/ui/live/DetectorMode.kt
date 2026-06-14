@@ -7,6 +7,8 @@ enum class DetectorMode {
     FAKE,
     TFLITE,
     NORTH,
+    NORTH_F32,
+    NORTH_GPU,
     // To add a new model:
     // 1. Add an enum value here
     // 2. Add a ModelDescriptor entry in ModelRegistry.all below
@@ -51,10 +53,24 @@ object ModelRegistry {
         ),
         ModelDescriptor(
             mode        = DetectorMode.NORTH,
-            displayName = "North — Custom Model",
+            displayName = "North — FP16",
             shortLabel  = "North",
-            description = "Custom bundled model (north_20260419.tflite).",
+            description = "Custom model, FP16 quantized weights (north_20260419.tflite).",
             assetFile   = "north_20260419.tflite",
+        ),
+        ModelDescriptor(
+            mode        = DetectorMode.NORTH_F32,
+            displayName = "North — Float32",
+            shortLabel  = "F32",
+            description = "Same model, all weights in full float32. No DEQUANTIZE ops — GPU delegate compatible.",
+            assetFile   = "north_float32.tflite",
+        ),
+        ModelDescriptor(
+            mode        = DetectorMode.NORTH_GPU,
+            displayName = "North — GPU (FP32, no postproc)",
+            shortLabel  = "GPU",
+            description = "North FP16 model converted to FP32 with DEQUANTIZE ops constant-folded. No INT64 ops. Best chance of GPU delegate success.",
+            assetFile   = "north_gpu.tflite",
         ),
     )
 }
