@@ -4,19 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
-import android.net.Uri
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.PixelCopy
-import androidx.media3.common.MediaItem
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.extractor.ExtractorsFactory
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -27,8 +20,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.PipedInputStream
-import java.io.PipedOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,18 +33,15 @@ import kotlin.coroutines.resume
  *   Header: 0x55 0xCC + port (2 bytes LE) + length (4 bytes LE) = 8 bytes total.
  *   Port 0x574A = raw H.264 video IN from goggles.
  *
- * Decoding: VIDEO_IN bytes are written to a PipedOutputStream. ExoPlayer reads
- * from the matching PipedInputStream via PipeDataSource + RawH264Extractor,
- * which uses ExoPlayer's built-in H264Reader for proper NAL-unit parsing and
- * renders directly to the provided Surface. No manual MediaCodec management.
+ * Decoding: VIDEO_IN bytes are fed straight into a hardware MediaCodec (video/avc)
+ * configured on the display Surface. Each decoded frame is rendered immediately via
+ * releaseOutputBuffer(idx, true) — no player, no buffering, minimal latency. This
+ * replaced an ExoPlayer + PipedStream pipeline whose buffering added latency and
+ * dropped frames under load. Mirrors the proven MediaCodec loop in DjiGogglesVideoSource.
  *
- * Inference: PixelCopy captures the display surface at 10fps into a 640×360 Bitmap
- * and attaches it to VideoFrame.bitmap for TfliteDetector. This avoids the
- * ImageReader surface compatibility issues of a second hardware decoder.
- *
- * Based on the approach from fpv-wtf/voc-poc + d4rken/fpv-dvca.
+ * Inference: PixelCopy captures the rendered surface at ~20fps into a 640×360 Bitmap
+ * and attaches it to VideoFrame.bitmap for TfliteDetector.
  */
-@OptIn(UnstableApi::class)
 class DjiGogglesAccessorySource(
     private val context: Context,
     val accessory: UsbAccessory,
@@ -85,11 +73,7 @@ class DjiGogglesAccessorySource(
         val outputStream = FileOutputStream(pfd.fileDescriptor)
         log?.println("Accessory opened OK")
 
-        // H.264 pipe: USB loop writes VIDEO_IN bytes here; ExoPlayer reads the other end.
-        val h264PipeOut = PipedOutputStream()
-        val h264PipeIn  = PipedInputStream(h264PipeOut, 1_048_576) // 1 MB cap (~1.6s at 5Mbps)
-
-        // PixelCopy inference: capture the already-rendered display surface at 10fps.
+        // PixelCopy inference: capture the already-rendered display surface.
         // Avoids a second hardware decoder whose YUV_420_888 Surface output is not
         // guaranteed across Android devices/drivers.
         val pendingInferenceBitmap = AtomicReference<Bitmap?>(null)
@@ -101,10 +85,8 @@ class DjiGogglesAccessorySource(
             val inferBitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
             try {
                 while (isActive) {
-                    // ~20fps capture cap so the inference loop (≈95ms after the fast-preproc fix),
-                    // not the bitmap supply, is the limiter. Was 100ms (10fps) which throttled below
-                    // the inference rate. Stale bitmaps are dropped via getAndSet, so over-capture
-                    // just costs a recycled copy.
+                    // ~20fps capture cap so the inference loop (≈95ms), not the bitmap
+                    // supply, is the limiter. Stale bitmaps are dropped via getAndSet.
                     delay(50L)
                     suspendCancellableCoroutine<Unit> { cont ->
                         PixelCopy.request(
@@ -133,68 +115,29 @@ class DjiGogglesAccessorySource(
             }
         } else null
 
-        // ExoPlayer must live on a Looper thread (main).
-        val playerJob = launch(Dispatchers.Main) {
-            // Minimal buffer for live streaming — default is 50 s which causes ~10 s latency.
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    /* minBufferMs             */ 200,
-                    /* maxBufferMs             */ 400,
-                    /* bufferForPlaybackMs     */ 50,
-                    /* bufferForPlaybackAfterRebufferMs */ 100,
-                )
-                .build()
-            val player = ExoPlayer.Builder(context)
-                .setLoadControl(loadControl)
-                .build()
-            renderSurface?.let { player.setVideoSurface(it) }
-
-            // Mirror ExoPlayer state and errors into the log file so we can debug without ADB.
-            player.addListener(object : androidx.media3.common.Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    val name = when (state) {
-                        androidx.media3.common.Player.STATE_IDLE     -> "IDLE"
-                        androidx.media3.common.Player.STATE_BUFFERING -> "BUFFERING"
-                        androidx.media3.common.Player.STATE_READY     -> "READY"
-                        androidx.media3.common.Player.STATE_ENDED     -> "ENDED"
-                        else -> "UNKNOWN($state)"
-                    }
-                    log?.println("ExoPlayer state → $name")
-                }
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    log?.println("ExoPlayer ERROR: ${error.errorCodeName} — ${error.message}")
-                    error.cause?.let { log?.println("  cause: ${it.javaClass.simpleName}: ${it.message}") }
-                }
-                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                    log?.println("ExoPlayer video size: ${videoSize.width}x${videoSize.height}")
-                    width  = videoSize.width
-                    height = videoSize.height
-                }
-                override fun onRenderedFirstFrame() {
-                    log?.println("ExoPlayer rendered first frame")
-                }
-            })
-
-            val dsFactory: DataSource.Factory = DataSource.Factory { PipeDataSource(h264PipeIn) }
-            val exFactory: ExtractorsFactory  = ExtractorsFactory { arrayOf(RawH264Extractor()) }
-            val source = ProgressiveMediaSource.Factory(dsFactory, exFactory)
-                .createMediaSource(MediaItem.fromUri(Uri.EMPTY))
-
-            player.setMediaSource(source)
-            player.prepare()
-            player.play()
-            log?.println("ExoPlayer started (surface=${renderSurface != null})")
-
+        // Hardware H.264 decoder rendering straight to the display surface. Configured
+        // without codec-specific data — MediaCodec picks up in-band SPS/PPS from the
+        // DJI stream (sent periodically before each IDR).
+        val codec: MediaCodec? = if (renderSurface != null) {
             try {
-                awaitCancellation()
-            } finally {
-                player.release()
-                log?.println("ExoPlayer released")
+                MediaCodec.createDecoderByType("video/avc").also { c ->
+                    val fmt = MediaFormat.createVideoFormat("video/avc", width, height)
+                    c.configure(fmt, renderSurface, null, 0)
+                    c.start()
+                }
+            } catch (e: Exception) {
+                log?.println("ERROR: H.264 decoder init failed: ${e.message}")
+                null
             }
+        } else {
+            log?.println("WARN: no render surface — decoding/display disabled")
+            null
         }
+        log?.println("MediaCodec ready=${codec != null} (${width}x${height})")
 
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
+        val bufInfo  = MediaCodec.BufferInfo()
         var totalReads  = 0
         var totalFrames = 0
         var videoBytes  = 0L
@@ -249,11 +192,39 @@ class DjiGogglesAccessorySource(
                     }
 
                     if (port == VIDEO_IN && length > 0) {
-                        h264PipeOut.write(data, i + HEADER_SIZE, length)
-                        h264PipeOut.flush()
+                        if (codec != null) {
+                            // Feed this H.264 chunk to the decoder.
+                            val inputIdx = try { codec.dequeueInputBuffer(10_000) }
+                                           catch (e: IllegalStateException) { -1 }
+                            if (inputIdx >= 0) {
+                                val buf = codec.getInputBuffer(inputIdx)
+                                if (buf != null) {
+                                    buf.clear()
+                                    runCatching { buf.put(data, i + HEADER_SIZE, length) }
+                                    codec.queueInputBuffer(inputIdx, 0, length, System.nanoTime() / 1000, 0)
+                                }
+                            }
+                            // Render every available decoded frame immediately (low latency).
+                            var outIdx = try { codec.dequeueOutputBuffer(bufInfo, 0) }
+                                         catch (e: IllegalStateException) { MediaCodec.INFO_TRY_AGAIN_LATER }
+                            while (outIdx != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                                when {
+                                    outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                                        val fmt = codec.outputFormat
+                                        width  = fmt.getInteger(MediaFormat.KEY_WIDTH)
+                                        height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                                        log?.println("output format changed: ${width}x${height}")
+                                    }
+                                    outIdx >= 0 -> codec.releaseOutputBuffer(outIdx, true) // render
+                                }
+                                outIdx = try { codec.dequeueOutputBuffer(bufInfo, 0) }
+                                         catch (e: IllegalStateException) { MediaCodec.INFO_TRY_AGAIN_LATER }
+                            }
+                        }
+
                         videoBytes += length
                         if (videoBytes <= 32_768L || videoBytes % 1_048_576L < length) {
-                            log?.println("video pipe: wrote ${length}B (total ${videoBytes / 1024}KB) at rx#$totalFrames")
+                            log?.println("video: ${length}B (total ${videoBytes / 1024}KB) at rx#$totalFrames")
                         }
                         val bmp = pendingInferenceBitmap.getAndSet(null)
                         send(VideoFrame(frameIndex++, System.currentTimeMillis(), width, height, bmp))
@@ -269,10 +240,10 @@ class DjiGogglesAccessorySource(
 
         } finally {
             pixelCopyJob?.cancel()
-            playerJob.cancel()
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
             log?.println("=== session ended ===")
             log?.close()
-            runCatching { h264PipeOut.close() }
             inputStream.close()
             outputStream.close()
             pfd.close()

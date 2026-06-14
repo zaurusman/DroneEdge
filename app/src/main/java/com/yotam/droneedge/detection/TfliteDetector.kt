@@ -121,7 +121,7 @@ class TfliteDetector(
         runCatching {
             val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
             val lines = buildList {
-                add("build=v11-infer-flow")  // bump this tag each new APK so we know which one ran
+                add("build=v12-mediacodec")  // bump this tag each new APK so we know which one ran
                 add("model=$modelFileName")
                 add("delegate=$delegateName")
                 add("input=${inputWidth}x${inputHeight} $inputDataType")
