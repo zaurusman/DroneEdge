@@ -364,46 +364,6 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
-            DetectorMode.NORTH_F32 -> {
-                if (context == null) return
-                viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        val tfd = TfliteDetector(
-                            context.applicationContext,
-                            modelFileName = "north_float32.tflite",
-                        )
-                        tfliteDetector?.close()
-                        tfliteDetector = tfd
-                        detector = tfd
-                        _detectorMode.value = DetectorMode.NORTH_F32
-                        _activeModelFile.value = null
-                        _detectorInfo.value = tfd.modelInfo
-                        _error.value = null
-                    } catch (e: Throwable) {
-                        _error.value = "TFLite load failed: ${e.message}"
-                    }
-                }
-            }
-            DetectorMode.NORTH_GPU -> {
-                if (context == null) return
-                viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        val tfd = TfliteDetector(
-                            context.applicationContext,
-                            modelFileName = "north_gpu.tflite",
-                        )
-                        tfliteDetector?.close()
-                        tfliteDetector = tfd
-                        detector = tfd
-                        _detectorMode.value = DetectorMode.NORTH_GPU
-                        _activeModelFile.value = null
-                        _detectorInfo.value = tfd.modelInfo
-                        _error.value = null
-                    } catch (e: Throwable) {
-                        _error.value = "TFLite load failed: ${e.message}"
-                    }
-                }
-            }
         }
     }
 
