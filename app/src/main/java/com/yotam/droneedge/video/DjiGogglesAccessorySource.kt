@@ -138,6 +138,10 @@ class DjiGogglesAccessorySource(
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
         val bufInfo  = MediaCodec.BufferInfo()
+        // Reassembles H.264 NAL units across the DJI's 4KB logiclink chunks. MediaCodec
+        // needs each input buffer to start at a NAL boundary (00 00 01); raw chunks don't.
+        val videoAcc = ByteArrayOutputStream(262_144)
+        var aligned  = false
         var totalReads  = 0
         var totalFrames = 0
         var videoBytes  = 0L
@@ -193,17 +197,43 @@ class DjiGogglesAccessorySource(
 
                     if (port == VIDEO_IN && length > 0) {
                         if (codec != null) {
-                            // Feed this H.264 chunk to the decoder.
-                            val inputIdx = try { codec.dequeueInputBuffer(10_000) }
-                                           catch (e: IllegalStateException) { -1 }
-                            if (inputIdx >= 0) {
-                                val buf = codec.getInputBuffer(inputIdx)
-                                if (buf != null) {
-                                    buf.clear()
-                                    runCatching { buf.put(data, i + HEADER_SIZE, length) }
-                                    codec.queueInputBuffer(inputIdx, 0, length, System.nanoTime() / 1000, 0)
+                            // Accumulate, then feed only complete NAL units (each starting at a
+                            // 00 00 01 start code). Keep the trailing partial NAL for next time.
+                            videoAcc.write(data, i + HEADER_SIZE, length)
+                            val vbuf = videoAcc.toByteArray()
+                            videoAcc.reset()
+
+                            var alignStart = 0
+                            if (!aligned) {
+                                val sc = nextStartCode(vbuf, 0, vbuf.size)
+                                if (sc < 0) { videoAcc.write(vbuf, 0, vbuf.size); alignStart = -1 }
+                                else { aligned = true; alignStart = sc }
+                            }
+                            if (alignStart >= 0) {
+                                val lastSc = lastStartCode(vbuf, alignStart + 3, vbuf.size)
+                                if (lastSc > alignStart) {
+                                    var ns = alignStart
+                                    while (ns < lastSc) {
+                                        val nx = nextStartCode(vbuf, ns + 3, lastSc)
+                                        val ne = if (nx < 0) lastSc else nx
+                                        val inputIdx = try { codec.dequeueInputBuffer(10_000) }
+                                                       catch (e: IllegalStateException) { -1 }
+                                        if (inputIdx >= 0) {
+                                            val ib = codec.getInputBuffer(inputIdx)
+                                            if (ib != null) {
+                                                ib.clear()
+                                                runCatching { ib.put(vbuf, ns, ne - ns) }
+                                                codec.queueInputBuffer(inputIdx, 0, ne - ns, System.nanoTime() / 1000, 0)
+                                            }
+                                        }
+                                        ns = ne
+                                    }
+                                    videoAcc.write(vbuf, lastSc, vbuf.size - lastSc)
+                                } else {
+                                    videoAcc.write(vbuf, alignStart, vbuf.size - alignStart)
                                 }
                             }
+
                             // Render every available decoded frame immediately (low latency).
                             var outIdx = try { codec.dequeueOutputBuffer(bufInfo, 0) }
                                          catch (e: IllegalStateException) { MediaCodec.INFO_TRY_AGAIN_LATER }
@@ -252,6 +282,26 @@ class DjiGogglesAccessorySource(
 
     override fun start() { frameIndex = 0L; running = true }
     override fun stop()  { running = false }
+
+    /** Index of the next 00 00 01 start code in [from, end), or -1. */
+    private fun nextStartCode(b: ByteArray, from: Int, end: Int): Int {
+        var i = from
+        while (i + 2 < end) {
+            if (b[i] == 0.toByte() && b[i + 1] == 0.toByte() && b[i + 2] == 1.toByte()) return i
+            i++
+        }
+        return -1
+    }
+
+    /** Index of the last 00 00 01 start code in [from, end), or -1. */
+    private fun lastStartCode(b: ByteArray, from: Int, end: Int): Int {
+        var i = end - 3
+        while (i >= from) {
+            if (b[i] == 0.toByte() && b[i + 1] == 0.toByte() && b[i + 2] == 1.toByte()) return i
+            i--
+        }
+        return -1
+    }
 
     private fun sendActivation(out: FileOutputStream, log: java.io.PrintWriter?) {
         runCatching { out.write(CMD_VIDEO_ACTIVATE_1) }
