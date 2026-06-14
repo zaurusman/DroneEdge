@@ -133,6 +133,14 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _latestFrame = MutableStateFlow<VideoFrame?>(null)
     val latestFrame: StateFlow<VideoFrame?> = _latestFrame.asStateFlow()
 
+    // ── Latest frame that actually carries a bitmap, for the inference loop ───
+    // Sources like the DJI stream emit many null-bitmap frames between captures.
+    // Feeding inference off _latestFrame lets those nulls conflate away the real
+    // bitmap frames (StateFlow keeps only the latest value). This dedicated flow
+    // only ever holds bitmap-bearing frames, so conflation drops an OLD bitmap for
+    // a NEWER one (desired) instead of losing bitmaps to nulls.
+    private val _inferenceFrame = MutableStateFlow<VideoFrame?>(null)
+
     private val previewFrameTimes = ArrayDeque<Long>()
     private val inferenceFrameTimes = ArrayDeque<Long>()
     private var pipelineJob: Job? = null
@@ -506,6 +514,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                             previewFrameTimes.removeFirst()
                         _previewFps.value = previewFrameTimes.size.toFloat()
                         _latestFrame.value = frame
+                        // Only forward bitmap-bearing frames to inference so null frames
+                        // can't conflate the real ones away (see _inferenceFrame).
+                        if (frame.bitmap != null) _inferenceFrame.value = frame
 
                         if (_recordingState.value == RecordingState.ARMED) {
                             recorder?.onFrame(frame, _detections.value)
@@ -527,7 +538,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             // Coroutine 2: run inference on latest available frame; skips frames
             // automatically when inference is slower than the source frame rate.
             launch(Dispatchers.Default) {
-                _latestFrame.filterNotNull().collect { frame ->
+                _inferenceFrame.filterNotNull().collect { frame ->
                     if (frame.bitmap == null) return@collect  // keep last detections visible
                     val results = detector.detect(frame)
                     _detections.value = results
@@ -557,6 +568,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _previewFps.value = 0f
         _inferenceFps.value = 0f
         _latestFrame.value = null
+        _inferenceFrame.value = null
         _sessionState.value = SessionState.IDLE
     }
 
