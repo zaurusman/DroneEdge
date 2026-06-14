@@ -67,6 +67,13 @@ class TfliteDetector(
     private val srcRect = Rect()
     private val dstRect = Rect()
 
+    // Fast preprocessing: a 256-entry byte→float/255 lookup table (avoids 1.2M divisions/frame),
+    // a reusable float scratch array, and a FloatBuffer view over inputBuffer so the normalized
+    // pixels are written in ONE bulk copy instead of ~1.2M individual ByteBuffer.putFloat calls.
+    private val normLut = FloatArray(256) { it / 255f }
+    private val floatInput: FloatArray
+    private val floatView: java.nio.FloatBuffer?
+
     init {
         val model = if (modelFile != null) loadModelFromFile(modelFile)
                     else loadModelFile(context, modelFileName)
@@ -100,12 +107,21 @@ class TfliteDetector(
         scalingCanvas = Canvas(scaledBitmap)
         dstRect.set(0, 0, inputWidth, inputHeight)
 
+        // FLOAT32 models get the bulk-write fast path; UINT8 models pack bytes directly.
+        if (inputDataType == DataType.FLOAT32) {
+            floatInput = FloatArray(inputWidth * inputHeight * 3)
+            floatView  = inputBuffer.asFloatBuffer()
+        } else {
+            floatInput = FloatArray(0)
+            floatView  = null
+        }
+
         // Write delegate info to the public logs folder so it's visible on the USB drive.
         // Values are escaped (newlines → <NL>) so each log entry is exactly one line.
         runCatching {
             val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
             val lines = buildList {
-                add("build=v9-flex-gpu")  // bump this tag each new APK so we know which one ran
+                add("build=v10-fast-preproc")  // bump this tag each new APK so we know which one ran
                 add("model=$modelFileName")
                 add("delegate=$delegateName")
                 add("input=${inputWidth}x${inputHeight} $inputDataType")
@@ -120,30 +136,38 @@ class TfliteDetector(
     override suspend fun detect(frame: VideoFrame): List<Detection> {
         val bitmap = frame.bitmap ?: return emptyList()
 
+        val tPre = android.os.SystemClock.elapsedRealtime()
         fillInputBuffer(bitmap)
+        val preMs = android.os.SystemClock.elapsedRealtime() - tPre
+
         val outputs = outputParser.allocateOutputs(maxDetections = 10)
         val outputMap = HashMap<Int, Any>(outputs.size).also { map ->
             outputs.forEachIndexed { i, o -> map[i] = o }
         }
 
-        val t0 = android.os.SystemClock.elapsedRealtime()
+        val tInf = android.os.SystemClock.elapsedRealtime()
         interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputMap)
-        recordTiming(android.os.SystemClock.elapsedRealtime() - t0)
+        val infMs = android.os.SystemClock.elapsedRealtime() - tInf
 
-        return outputParser.parse(outputs, labels, confidenceThreshold)
+        val tParse = android.os.SystemClock.elapsedRealtime()
+        val result = outputParser.parse(outputs, labels, confidenceThreshold)
+        val parseMs = android.os.SystemClock.elapsedRealtime() - tParse
+
+        recordTiming(preMs, infMs, parseMs)
+        return result
     }
 
-    private fun recordTiming(ms: Long) {
+    private fun recordTiming(preMs: Long, infMs: Long, parseMs: Long) {
         val n = ++inferenceCount
         if (n <= 20) {
-            timingLines += "[${n}] ${ms}ms"
+            timingLines += "[${n}] pre=${preMs} inf=${infMs} parse=${parseMs} total=${preMs + infMs + parseMs}ms"
         }
         // Write after every 5th inference (overwrite), so data exists even for short runs.
         if (n % 5 == 0 || n == 1) {
             runCatching {
                 val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
                 File(logDir, "tflite_timing.txt").writeText(
-                    "delegate=$delegateName  n=$n\n${timingLines.joinToString("\n")}\n"
+                    "delegate=$delegateName input=${inputWidth}x${inputHeight} n=$n\n${timingLines.joinToString("\n")}\n"
                 )
             }
         }
@@ -232,21 +256,31 @@ class TfliteDetector(
         srcRect.set(0, 0, bitmap.width, bitmap.height)
         scalingCanvas.drawBitmap(bitmap, srcRect, dstRect, scalingPaint)
         scaledBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-        inputBuffer.rewind()
-        for (pixel in pixels) {
-            val r = (pixel shr 16) and 0xFF
-            val g = (pixel shr 8)  and 0xFF
-            val b =  pixel         and 0xFF
-            if (inputDataType == DataType.FLOAT32) {
-                inputBuffer.putFloat(r / 255f)
-                inputBuffer.putFloat(g / 255f)
-                inputBuffer.putFloat(b / 255f)
-            } else {
-                inputBuffer.put(r.toByte())
-                inputBuffer.put(g.toByte())
-                inputBuffer.put(b.toByte())
+
+        val fv = floatView
+        if (fv != null) {
+            // FLOAT32 fast path: normalize via LUT into a flat float[], then ONE bulk copy into
+            // the direct buffer. Replaces ~1.2M individual putFloat calls (the old bottleneck).
+            val lut = normLut
+            val out = floatInput
+            var j = 0
+            for (pixel in pixels) {
+                out[j++] = lut[(pixel shr 16) and 0xFF]
+                out[j++] = lut[(pixel shr 8)  and 0xFF]
+                out[j++] = lut[ pixel         and 0xFF]
             }
+            fv.clear()
+            fv.put(out)
+            inputBuffer.rewind()
+        } else {
+            // UINT8 models (e.g. SSD MobileNet): pack RGB bytes directly.
+            inputBuffer.rewind()
+            for (pixel in pixels) {
+                inputBuffer.put(((pixel shr 16) and 0xFF).toByte())
+                inputBuffer.put(((pixel shr 8)  and 0xFF).toByte())
+                inputBuffer.put(( pixel         and 0xFF).toByte())
+            }
+            inputBuffer.rewind()
         }
-        inputBuffer.rewind()
     }
 }

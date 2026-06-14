@@ -101,7 +101,11 @@ class DjiGogglesAccessorySource(
             val inferBitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
             try {
                 while (isActive) {
-                    delay(100L)
+                    // ~20fps capture cap so the inference loop (≈95ms after the fast-preproc fix),
+                    // not the bitmap supply, is the limiter. Was 100ms (10fps) which throttled below
+                    // the inference rate. Stale bitmaps are dropped via getAndSet, so over-capture
+                    // just costs a recycled copy.
+                    delay(50L)
                     suspendCancellableCoroutine<Unit> { cont ->
                         PixelCopy.request(
                             renderSurface, null, inferBitmap,
