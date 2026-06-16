@@ -70,14 +70,14 @@ class FileMediaCodecVideoSource(
             val capBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             try {
                 while (isActive) {
-                    delay(15L) // ≤~60fps; actual rate bounded by decode/display
+                    delay(15L) // intentional ~60fps cap for full-res file replay (higher than DJI source's 20fps cap); actual rate bounded by decode/display
                     suspendCancellableCoroutine<Unit> { cont ->
                         PixelCopy.request(renderSurface, capBitmap, { res ->
-                            if (res == PixelCopy.SUCCESS) {
+                            if (cont.isActive && res == PixelCopy.SUCCESS) {
                                 pending.getAndSet(capBitmap.copy(Bitmap.Config.ARGB_8888, false))
                                     ?.recycle()
                             }
-                            cont.resume(Unit)
+                            if (cont.isActive) cont.resume(Unit)
                         }, handler)
                     }
                 }
@@ -89,41 +89,45 @@ class FileMediaCodecVideoSource(
         } else null
 
         val extractor = MediaExtractor()
-        extractor.setDataSource(context, uri, null)
-        val track = selectVideoTrack(extractor)
-        extractor.selectTrack(track)
-        val format = extractor.getTrackFormat(track)
-        val mime = format.getString(MediaFormat.KEY_MIME)!!
-
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(format, renderSurface, null, 0)
-        codec.start()
-
-        val bufInfo = MediaCodec.BufferInfo()
-        var anchorWallNs = System.nanoTime()
-        var anchorPtsUs = -1L
-
+        var codec: MediaCodec? = null
         try {
+            extractor.setDataSource(context, uri, null)
+            val track = selectVideoTrack(extractor)
+            extractor.selectTrack(track)
+            val format = extractor.getTrackFormat(track)
+            val mime = format.getString(MediaFormat.KEY_MIME)!!
+
+            codec = MediaCodec.createDecoderByType(mime).apply {
+                configure(format, renderSurface, null, 0)
+                start()
+            }
+            val dec = codec
+
+            val bufInfo = MediaCodec.BufferInfo()
+            var anchorWallNs = System.nanoTime()
+            var anchorPtsUs = -1L
+
             while (running && isActive) {
                 // ── Feed one input buffer ──
-                val inIdx = codec.dequeueInputBuffer(10_000L)
+                val inIdx = dec.dequeueInputBuffer(10_000L)
                 if (inIdx >= 0) {
-                    val ib = codec.getInputBuffer(inIdx)!!
+                    val ib = dec.getInputBuffer(inIdx)!!
                     val n = extractor.readSampleData(ib, 0)
                     if (n < 0) {
-                        // End of file → seamless loop back to start, re-anchor pacing.
+                        // End of file → seamless loop. No EOS flag: we're looping, not
+                        // terminating, so the codec keeps running for the next pass.
                         extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                         anchorPtsUs = -1L
-                        codec.queueInputBuffer(inIdx, 0, 0, 0L, 0)
+                        dec.queueInputBuffer(inIdx, 0, 0, 0L, 0)
                     } else {
                         val pts = extractor.sampleTime
-                        codec.queueInputBuffer(inIdx, 0, n, pts, 0)
+                        dec.queueInputBuffer(inIdx, 0, n, pts, 0)
                         extractor.advance()
                     }
                 }
 
                 // ── Drain one output buffer, pace, render ──
-                val outIdx = codec.dequeueOutputBuffer(bufInfo, 10_000L)
+                val outIdx = dec.dequeueOutputBuffer(bufInfo, 10_000L)
                 when {
                     outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit // dims set in init
                     outIdx >= 0 -> {
@@ -135,7 +139,7 @@ class FileMediaCodecVideoSource(
                             anchorWallNs, anchorPtsUs, bufInfo.presentationTimeUs, System.nanoTime()
                         )
                         if (sleep in 1L..200L) delay(sleep)
-                        codec.releaseOutputBuffer(outIdx, true) // render to surface
+                        dec.releaseOutputBuffer(outIdx, true) // render to surface
                         val bmp = pending.getAndSet(null)
                         send(VideoFrame(frameIndex++, System.currentTimeMillis(), width, height, bmp))
                     }
@@ -143,8 +147,8 @@ class FileMediaCodecVideoSource(
             }
         } finally {
             captureJob?.cancel()
-            runCatching { codec.stop() }
-            runCatching { codec.release() }
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
             extractor.release()
         }
     }.flowOn(Dispatchers.IO)
