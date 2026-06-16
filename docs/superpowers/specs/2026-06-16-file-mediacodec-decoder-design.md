@@ -87,13 +87,20 @@ Reports rotated dimensions: for rotation 90/270, swap width/height.
   once the display Surface is available; reuse/generalize the existing
   `_djiSurface` mechanism into a shared "render surface for surface-based
   sources."
-- **Inference 14 fps preservation:** the inference coroutine downsamples each
-  frame's full-res bitmap to the **same working resolution the DJI path uses for
-  its 14 fps** (≈640×360 — confirm the exact value in code during planning)
-  **before** `detect()`. Feeding `detect()` a small bitmap keeps per-inference
-  cost equal to the DJI path; the only addition is one native bilinear downscale
-  per inference frame (~20/s, a few ms — negligible). This is deliberately
-  *not* the full-res bitmap, which would slow preprocessing and dent 14 fps.
+- **Inference & 14 fps:** `TfliteDetector.fillInputBuffer` *already* scales its
+  input bitmap (bilinear `Canvas.drawBitmap`) to the model's tensor size. So the
+  inference path needs **no change** — feed it the full-res `frame.bitmap`
+  directly. (Pre-downscaling in the ViewModel would be counterproductive: it
+  reads all 1080p pixels to shrink, then the detector scales again — strictly
+  more work than letting the detector scale once.) The only added cost vs the
+  DJI path is that the detector's internal scale reads a larger source bitmap
+  (~a few ms of `preMs`, which `TfliteDetector` already logs to
+  `tflite_timing.txt`).
+  - **Verify on device.** If measured inference fps drops below the ~14 target,
+    apply the documented fallback (Task: dedicated small capture) — a second
+    PixelCopy into a 640×360 bitmap (GPU-scaled during readback, never a full-res
+    CPU read), carried on a new `VideoFrame.inferenceBitmap` field that the
+    inference loop prefers over `bitmap`. Start without it (YAGNI).
 - Recording is unchanged: `recorder.onFrame` receives the **full-res** bitmap →
   sharp annotated recordings. `recorder.start(videoSource.width, height, …)`
   already uses the (now rotated) source dimensions.
@@ -115,8 +122,9 @@ Reports rotated dimensions: for rotation 90/270, swap width/height.
   affect it.
 - **Recording:** full-res PixelCopy bitmap → recorder → sharp 1080p (or native)
   recordings.
-- **Inference:** full-res bitmap downsampled to the existing working size →
-  `detect()` runs at the same cost as today → ~14 fps preserved.
+- **Inference:** receives the same full-res `frame.bitmap`; `TfliteDetector`
+  scales it internally (as it already does). Verify fps on device; fall back to
+  a dedicated 640×360 capture only if needed.
 
 ### Allocation note
 
