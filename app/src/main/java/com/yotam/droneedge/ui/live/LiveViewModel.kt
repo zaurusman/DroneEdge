@@ -20,6 +20,7 @@ import com.droneedge.app.recording.sanitizeSessionName
 import com.droneedge.app.video.CameraVideoSource
 import com.droneedge.app.video.FakeVideoSource
 import com.droneedge.app.video.FileReplayVideoSource
+import com.droneedge.app.video.FileMediaCodecVideoSource
 import com.droneedge.app.video.DjiGogglesVideoSource
 import com.droneedge.app.video.UsbUvcVideoSource
 import com.droneedge.app.video.VideoFrame
@@ -68,9 +69,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _djiAccessory = MutableStateFlow<android.hardware.usb.UsbAccessory?>(null)
     val djiAccessory: StateFlow<android.hardware.usb.UsbAccessory?> = _djiAccessory.asStateFlow()
 
-    // ── Surface for DJI GPU-direct rendering ─────────────────────────────────
-    private val _djiSurface = MutableStateFlow<android.view.Surface?>(null)
-    fun setDjiSurface(surface: android.view.Surface?) { _djiSurface.value = surface }
+    // ── Display surface for surface-based sources (DJI + file MediaCodec) ──────
+    private val _renderSurface = MutableStateFlow<android.view.Surface?>(null)
+    fun setRenderSurface(surface: android.view.Surface?) { _renderSurface.value = surface }
 
     // ── Camera facing (null = no camera source) ───────────────────────────────
     private val _cameraFacing = MutableStateFlow<Int?>(null)
@@ -154,7 +155,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun useFileSource(uri: Uri, context: android.content.Context) {
         if (_sessionState.value != SessionState.IDLE) return
-        videoSource      = FileReplayVideoSource(uri, context.applicationContext)
+        videoSource      = FileMediaCodecVideoSource(uri, context.applicationContext)
         _videoUri.value  = uri
         _usbDevice.value = null
         _cameraFacing.value = null
@@ -453,7 +454,17 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             videoSource = com.droneedge.app.video.DjiGogglesAccessorySource(
                 context        = getApplication<android.app.Application>().applicationContext,
                 accessory      = acc,
-                renderSurface  = _djiSurface.value,
+                renderSurface  = _renderSurface.value,
+            )
+        }
+
+        // For a file source, re-create it with the display Surface that Compose has set up
+        // by the time the user presses START (mirrors the DJI accessory path).
+        _videoUri.value?.let { uri ->
+            videoSource = com.droneedge.app.video.FileMediaCodecVideoSource(
+                uri           = uri,
+                context       = getApplication<android.app.Application>().applicationContext,
+                renderSurface = _renderSurface.value,
             )
         }
 
