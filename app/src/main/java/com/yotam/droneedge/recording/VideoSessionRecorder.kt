@@ -146,12 +146,25 @@ class VideoSessionRecorder : SessionRecorder {
 
                 val inputIdx = enc.dequeueInputBuffer(10_000L)
                 if (inputIdx >= 0) {
-                    val yuv = bitmapToI420(scaled)
-                    val buf = enc.getInputBuffer(inputIdx)!!
-                    buf.clear()
-                    buf.put(yuv)
                     val ptsUs = (frame.timestampMs - firstTimestampMs) * 1_000L
-                    enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    // Prefer getInputImage() — it exposes the encoder's actual plane strides and
+                    // chroma layout (NV12 semi-planar on the Samsung/Adreno hardware AVC encoder),
+                    // so rows land at the right offsets. Dumping tightly-packed I420 via
+                    // getInputBuffer() ignores stride/pixelStride → green + wrong-colour patches.
+                    // Fall back to the raw ByteBuffer path only if the image API is unavailable
+                    // (software encoder).
+                    val image = enc.getInputImage(inputIdx)
+                    if (image != null) {
+                        val nv12 = bitmapToNv12(scaled)
+                        writeNv12ToImage(nv12, image, encodedWidth, encodedHeight)
+                        enc.queueInputBuffer(inputIdx, 0, 0, ptsUs, 0)
+                    } else {
+                        val yuv = bitmapToI420(scaled)
+                        val buf = enc.getInputBuffer(inputIdx)!!
+                        buf.clear()
+                        buf.put(yuv)
+                        enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    }
                 }
                 if (scaled !== annotated) scaled.recycle()
                 annotated.recycle()
