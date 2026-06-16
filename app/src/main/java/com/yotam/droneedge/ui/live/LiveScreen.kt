@@ -302,14 +302,13 @@ fun LiveScreen(
 
         // ── Background ────────────────────────────────────────────────────────
         when {
-            videoUri != null -> VideoPlayer(
-                uri       = videoUri!!,
-                isPlaying = sessionState == SessionState.RUNNING,
+            videoUri != null -> RenderSurfaceView(
                 modifier  = Modifier.fillMaxSize(),
+                onSurface = { vm.setRenderSurface(it) },
             )
-            djiDevice != null || djiAccessory != null -> DjiSurfaceView(
+            djiDevice != null || djiAccessory != null -> RenderSurfaceView(
                 modifier  = Modifier.fillMaxSize(),
-                onSurface = { vm.setDjiSurface(it) },
+                onSurface = { vm.setRenderSurface(it) },
             )
             cameraFacing != null -> CameraFrameDisplay(
                 frames   = vm.latestFrame,
@@ -669,10 +668,10 @@ private fun RecButton(
     }
 }
 
-// ── DJI Surface view — MediaCodec renders H.264 directly to GPU, no CPU copy ──
+// ── Render surface view — MediaCodec renders H.264 directly to GPU, no CPU copy ──
 
 @Composable
-private fun DjiSurfaceView(
+private fun RenderSurfaceView(
     modifier: Modifier = Modifier,
     onSurface: (android.view.Surface?) -> Unit,
 ) {
