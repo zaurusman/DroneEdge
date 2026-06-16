@@ -1,7 +1,11 @@
 package com.droneedge.app.recording
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import java.nio.BufferOverflowException
+import java.nio.ByteBuffer
 
 class YuvConversionTest {
 
@@ -105,6 +109,77 @@ class YuvConversionTest {
             assertEquals("R NV12", 0, (pixel shr 16) and 0xFF)
             assertEquals("G NV12", 0, (pixel shr 8) and 0xFF)
             assertEquals("B NV12", 0, pixel and 0xFF)
+        }
+    }
+
+    // ── writeNv12Planes: encoder input feed (recording-color-corruption fix) ──────
+    //
+    // A 4×4 frame. NV12 = 16 Y bytes + 8 interleaved chroma bytes (2×2 chroma).
+    // Chroma source layout (interleaved U,V), row stride = width = 4:
+    //   row0: U0=10 V0=11 U1=12 V1=13
+    //   row1: U0=14 V0=15 U1=16 V1=17
+    private val width = 4
+    private val height = 4
+    private val nv12 = ByteArray(24).also { buf ->
+        for (i in 0 until 16) buf[i] = (i + 100).toByte()           // Y plane, distinct values
+        val chroma = intArrayOf(10, 11, 12, 13, 14, 15, 16, 17)
+        for (i in chroma.indices) buf[16 + i] = chroma[i].toByte()
+    }
+
+    @Test
+    fun writeNv12SemiPlanarLandsSamplesAtCorrectStride() {
+        // Semi-planar: U (planes[1]) and V (planes[2]) are two views of ONE 8-byte
+        // chroma region, V offset by 1. rowStride = 4, pixelStride = 2.
+        // planes[1]'s limit excludes the final V byte (index 7) — exactly the real
+        // Android layout that made the old bulk put overflow.
+        val region = ByteArray(8)
+        val uBuf = ByteBuffer.wrap(region, 0, 7).slice()   // U view: limit 7 (index 7 invalid)
+        val vBuf = ByteBuffer.wrap(region, 1, 7).slice()   // V view: maps to region[1..7]
+        val yBuf = ByteBuffer.allocate(16)
+
+        writeNv12Planes(
+            nv12, width, height,
+            yBuf, /*yRowStride*/ 4,
+            uBuf, /*uRowStride*/ 4, /*uPixelStride*/ 2,
+            vBuf, /*vRowStride*/ 4, /*vPixelStride*/ 2,
+        )
+
+        // U at even region indices, V at odd — i.e. the original interleaved order.
+        assertArrayEquals(byteArrayOf(10, 11, 12, 13, 14, 15, 16, 17), region)
+    }
+
+    @Test
+    fun writeNv12PlanarLandsUAndVInSeparateBuffers() {
+        // I420 planar: separate U and V buffers, pixelStride 1, rowStride 2 (= width/2).
+        val uBuf = ByteBuffer.allocate(4)
+        val vBuf = ByteBuffer.allocate(4)
+        val yBuf = ByteBuffer.allocate(16)
+
+        writeNv12Planes(
+            nv12, width, height,
+            yBuf, 4,
+            uBuf, /*uRowStride*/ 2, /*uPixelStride*/ 1,
+            vBuf, /*vRowStride*/ 2, /*vPixelStride*/ 1,
+        )
+
+        // U = the even chroma bytes, V = the odd ones.
+        assertArrayEquals(byteArrayOf(10, 12, 14, 16), uBuf.array())
+        assertArrayEquals(byteArrayOf(11, 13, 15, 17), vBuf.array())
+    }
+
+    @Test
+    fun oldBulkChromaPutOverflowsSemiPlanarLastRow() {
+        // Reproduces the regression: the previous semi-planar path did a bulk
+        // `put(nv12, offset, width)` per chroma row. On the last row that runs one
+        // byte past planes[1]'s limit → BufferOverflowException (null message →
+        // surfaced as "Video source error").
+        val region = ByteArray(8)
+        val uvBuf = ByteBuffer.wrap(region, 0, 7).slice()   // limit 7, as Android reports
+        assertThrows(BufferOverflowException::class.java) {
+            for (row in 0 until height / 2) {
+                uvBuf.position(row * 4)                       // uvRowStride = 4
+                uvBuf.put(nv12, 16 + row * width, width)     // bulk put of a full row
+            }
         }
     }
 }
