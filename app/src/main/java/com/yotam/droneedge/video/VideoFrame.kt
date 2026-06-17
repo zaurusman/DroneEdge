@@ -6,8 +6,7 @@ import android.graphics.Bitmap
  * A single frame produced by a VideoSource.
  *
  * [bitmap] is null for FakeVideoSource (no real pixel data).
- * FileReplayVideoSource fills it via MediaMetadataRetriever.
- * Phase 5+ will replace it with a proper decoded surface buffer.
+ * FileMediaCodecVideoSource and the DJI sources fill it via PixelCopy of the rendered surface.
  */
 data class VideoFrame(
     val index: Long,
