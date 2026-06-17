@@ -1,32 +1,30 @@
 package com.droneedge.app.video
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
-import android.net.Uri
-import android.util.Log
-import androidx.media3.common.MediaItem
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.extractor.ExtractorsFactory
+import android.media.MediaCodec
+import android.media.MediaFormat
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.PixelCopy
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.PipedInputStream
-import java.io.PipedOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.resume
 
 /**
  * Streams H.264 video from DJI Goggles 2 / Integra via USB Accessory mode.
@@ -35,14 +33,15 @@ import java.util.Locale
  *   Header: 0x55 0xCC + port (2 bytes LE) + length (4 bytes LE) = 8 bytes total.
  *   Port 0x574A = raw H.264 video IN from goggles.
  *
- * Decoding: VIDEO_IN bytes are written to a PipedOutputStream. ExoPlayer reads
- * from the matching PipedInputStream via PipeDataSource + RawH264Extractor,
- * which uses ExoPlayer's built-in H264Reader for proper NAL-unit parsing and
- * renders directly to the provided Surface. No manual MediaCodec management.
+ * Decoding: VIDEO_IN bytes are fed straight into a hardware MediaCodec (video/avc)
+ * configured on the display Surface. Each decoded frame is rendered immediately via
+ * releaseOutputBuffer(idx, true) — no player, no buffering, minimal latency. This
+ * replaced an ExoPlayer + PipedStream pipeline whose buffering added latency and
+ * dropped frames under load. Mirrors the proven MediaCodec loop in DjiGogglesVideoSource.
  *
- * Based on the approach from fpv-wtf/voc-poc + d4rken/fpv-dvca.
+ * Inference: PixelCopy captures the rendered surface at ~20fps into a 640×360 Bitmap
+ * and attaches it to VideoFrame.bitmap for TfliteDetector.
  */
-@OptIn(UnstableApi::class)
 class DjiGogglesAccessorySource(
     private val context: Context,
     val accessory: UsbAccessory,
@@ -74,72 +73,75 @@ class DjiGogglesAccessorySource(
         val outputStream = FileOutputStream(pfd.fileDescriptor)
         log?.println("Accessory opened OK")
 
-        // H.264 pipe: USB loop writes VIDEO_IN bytes here; ExoPlayer reads the other end.
-        val h264PipeOut = PipedOutputStream()
-        val h264PipeIn  = PipedInputStream(h264PipeOut, 1_048_576) // 1 MB cap (~1.6s at 5Mbps)
-
-        // ExoPlayer must live on a Looper thread (main).
-        val playerJob = launch(Dispatchers.Main) {
-            // Minimal buffer for live streaming — default is 50 s which causes ~10 s latency.
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    /* minBufferMs             */ 200,
-                    /* maxBufferMs             */ 400,
-                    /* bufferForPlaybackMs     */ 50,
-                    /* bufferForPlaybackAfterRebufferMs */ 100,
-                )
-                .build()
-            val player = ExoPlayer.Builder(context)
-                .setLoadControl(loadControl)
-                .build()
-            renderSurface?.let { player.setVideoSurface(it) }
-
-            // Mirror ExoPlayer state and errors into the log file so we can debug without ADB.
-            player.addListener(object : androidx.media3.common.Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    val name = when (state) {
-                        androidx.media3.common.Player.STATE_IDLE     -> "IDLE"
-                        androidx.media3.common.Player.STATE_BUFFERING -> "BUFFERING"
-                        androidx.media3.common.Player.STATE_READY     -> "READY"
-                        androidx.media3.common.Player.STATE_ENDED     -> "ENDED"
-                        else -> "UNKNOWN($state)"
-                    }
-                    log?.println("ExoPlayer state → $name")
-                }
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    log?.println("ExoPlayer ERROR: ${error.errorCodeName} — ${error.message}")
-                    error.cause?.let { log?.println("  cause: ${it.javaClass.simpleName}: ${it.message}") }
-                }
-                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                    log?.println("ExoPlayer video size: ${videoSize.width}x${videoSize.height}")
-                    width  = videoSize.width
-                    height = videoSize.height
-                }
-                override fun onRenderedFirstFrame() {
-                    log?.println("ExoPlayer rendered first frame")
-                }
-            })
-
-            val dsFactory: DataSource.Factory = DataSource.Factory { PipeDataSource(h264PipeIn) }
-            val exFactory: ExtractorsFactory  = ExtractorsFactory { arrayOf(RawH264Extractor()) }
-            val source = ProgressiveMediaSource.Factory(dsFactory, exFactory)
-                .createMediaSource(MediaItem.fromUri(Uri.EMPTY))
-
-            player.setMediaSource(source)
-            player.prepare()
-            player.play()
-            log?.println("ExoPlayer started (surface=${renderSurface != null})")
-
+        // PixelCopy inference: capture the already-rendered display surface.
+        // Avoids a second hardware decoder whose YUV_420_888 Surface output is not
+        // guaranteed across Android devices/drivers.
+        val pendingInferenceBitmap = AtomicReference<Bitmap?>(null)
+        var pixelCopyCount = 0L
+        val pixelCopyJob = if (renderSurface != null) launch(Dispatchers.IO) {
+            val handlerThread = HandlerThread("pixelcopy-infer")
+            handlerThread.start()
+            val handler = Handler(handlerThread.looper)
+            val inferBitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888)
             try {
-                awaitCancellation()
+                while (isActive) {
+                    // ~20fps capture cap so the inference loop (≈95ms), not the bitmap
+                    // supply, is the limiter. Stale bitmaps are dropped via getAndSet.
+                    delay(50L)
+                    suspendCancellableCoroutine<Unit> { cont ->
+                        PixelCopy.request(
+                            renderSurface, null, inferBitmap,
+                            { result ->
+                                if (result == PixelCopy.SUCCESS) {
+                                    pixelCopyCount++
+                                    if (pixelCopyCount == 1L || pixelCopyCount % 100L == 0L) {
+                                        log?.println("PixelCopy inference: frame #$pixelCopyCount")
+                                    }
+                                    val copy = inferBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    pendingInferenceBitmap.getAndSet(copy)?.recycle()
+                                } else {
+                                    log?.println("PixelCopy inference: failed result=$result")
+                                }
+                                cont.resume(Unit)
+                            },
+                            handler,
+                        )
+                    }
+                }
             } finally {
-                player.release()
-                log?.println("ExoPlayer released")
+                inferBitmap.recycle()
+                pendingInferenceBitmap.getAndSet(null)?.recycle()
+                handlerThread.quitSafely()
             }
+        } else null
+
+        // Hardware H.264 decoder rendering straight to the display surface. Configured
+        // without codec-specific data — MediaCodec picks up in-band SPS/PPS from the
+        // DJI stream (sent periodically before each IDR).
+        val codec: MediaCodec? = if (renderSurface != null) {
+            try {
+                MediaCodec.createDecoderByType("video/avc").also { c ->
+                    val fmt = MediaFormat.createVideoFormat("video/avc", width, height)
+                    c.configure(fmt, renderSurface, null, 0)
+                    c.start()
+                }
+            } catch (e: Exception) {
+                log?.println("ERROR: H.264 decoder init failed: ${e.message}")
+                null
+            }
+        } else {
+            log?.println("WARN: no render surface — decoding/display disabled")
+            null
         }
+        log?.println("MediaCodec ready=${codec != null} (${width}x${height})")
 
         val readBuf  = ByteArray(131_072)
         val pending  = ByteArrayOutputStream(131_072)
+        val bufInfo  = MediaCodec.BufferInfo()
+        // Reassembles H.264 NAL units across the DJI's 4KB logiclink chunks. MediaCodec
+        // needs each input buffer to start at a NAL boundary (00 00 01); raw chunks don't.
+        val videoAcc = ByteArrayOutputStream(262_144)
+        var aligned  = false
         var totalReads  = 0
         var totalFrames = 0
         var videoBytes  = 0L
@@ -194,13 +196,68 @@ class DjiGogglesAccessorySource(
                     }
 
                     if (port == VIDEO_IN && length > 0) {
-                        h264PipeOut.write(data, i + HEADER_SIZE, length)
-                        h264PipeOut.flush()
+                        if (codec != null) {
+                            // Accumulate, then feed only complete NAL units (each starting at a
+                            // 00 00 01 start code). Keep the trailing partial NAL for next time.
+                            videoAcc.write(data, i + HEADER_SIZE, length)
+                            val vbuf = videoAcc.toByteArray()
+                            videoAcc.reset()
+
+                            var alignStart = 0
+                            if (!aligned) {
+                                val sc = nextStartCode(vbuf, 0, vbuf.size)
+                                if (sc < 0) { videoAcc.write(vbuf, 0, vbuf.size); alignStart = -1 }
+                                else { aligned = true; alignStart = sc }
+                            }
+                            if (alignStart >= 0) {
+                                val lastSc = lastStartCode(vbuf, alignStart + 3, vbuf.size)
+                                if (lastSc > alignStart) {
+                                    var ns = alignStart
+                                    while (ns < lastSc) {
+                                        val nx = nextStartCode(vbuf, ns + 3, lastSc)
+                                        val ne = if (nx < 0) lastSc else nx
+                                        val inputIdx = try { codec.dequeueInputBuffer(10_000) }
+                                                       catch (e: IllegalStateException) { -1 }
+                                        if (inputIdx >= 0) {
+                                            val ib = codec.getInputBuffer(inputIdx)
+                                            if (ib != null) {
+                                                ib.clear()
+                                                runCatching { ib.put(vbuf, ns, ne - ns) }
+                                                codec.queueInputBuffer(inputIdx, 0, ne - ns, System.nanoTime() / 1000, 0)
+                                            }
+                                        }
+                                        ns = ne
+                                    }
+                                    videoAcc.write(vbuf, lastSc, vbuf.size - lastSc)
+                                } else {
+                                    videoAcc.write(vbuf, alignStart, vbuf.size - alignStart)
+                                }
+                            }
+
+                            // Render every available decoded frame immediately (low latency).
+                            var outIdx = try { codec.dequeueOutputBuffer(bufInfo, 0) }
+                                         catch (e: IllegalStateException) { MediaCodec.INFO_TRY_AGAIN_LATER }
+                            while (outIdx != MediaCodec.INFO_TRY_AGAIN_LATER) {
+                                when {
+                                    outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                                        val fmt = codec.outputFormat
+                                        width  = fmt.getInteger(MediaFormat.KEY_WIDTH)
+                                        height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                                        log?.println("output format changed: ${width}x${height}")
+                                    }
+                                    outIdx >= 0 -> codec.releaseOutputBuffer(outIdx, true) // render
+                                }
+                                outIdx = try { codec.dequeueOutputBuffer(bufInfo, 0) }
+                                         catch (e: IllegalStateException) { MediaCodec.INFO_TRY_AGAIN_LATER }
+                            }
+                        }
+
                         videoBytes += length
                         if (videoBytes <= 32_768L || videoBytes % 1_048_576L < length) {
-                            log?.println("video pipe: wrote ${length}B (total ${videoBytes / 1024}KB) at rx#$totalFrames")
+                            log?.println("video: ${length}B (total ${videoBytes / 1024}KB) at rx#$totalFrames")
                         }
-                        send(VideoFrame(frameIndex++, System.currentTimeMillis(), width, height, null))
+                        val bmp = pendingInferenceBitmap.getAndSet(null)
+                        send(VideoFrame(frameIndex++, System.currentTimeMillis(), width, height, bmp))
                     }
 
                     i += HEADER_SIZE + length
@@ -212,10 +269,11 @@ class DjiGogglesAccessorySource(
             log?.println("totalReads=$totalReads  totalFrames=$totalFrames  videoBytes=${videoBytes / 1024}KB")
 
         } finally {
-            playerJob.cancel()
+            pixelCopyJob?.cancel()
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
             log?.println("=== session ended ===")
             log?.close()
-            runCatching { h264PipeOut.close() }
             inputStream.close()
             outputStream.close()
             pfd.close()
@@ -224,6 +282,26 @@ class DjiGogglesAccessorySource(
 
     override fun start() { frameIndex = 0L; running = true }
     override fun stop()  { running = false }
+
+    /** Index of the next 00 00 01 start code in [from, end), or -1. */
+    private fun nextStartCode(b: ByteArray, from: Int, end: Int): Int {
+        var i = from
+        while (i + 2 < end) {
+            if (b[i] == 0.toByte() && b[i + 1] == 0.toByte() && b[i + 2] == 1.toByte()) return i
+            i++
+        }
+        return -1
+    }
+
+    /** Index of the last 00 00 01 start code in [from, end), or -1. */
+    private fun lastStartCode(b: ByteArray, from: Int, end: Int): Int {
+        var i = end - 3
+        while (i >= from) {
+            if (b[i] == 0.toByte() && b[i + 1] == 0.toByte() && b[i + 2] == 1.toByte()) return i
+            i--
+        }
+        return -1
+    }
 
     private fun sendActivation(out: FileOutputStream, log: java.io.PrintWriter?) {
         runCatching { out.write(CMD_VIDEO_ACTIVATE_1) }

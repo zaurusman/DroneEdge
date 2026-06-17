@@ -5,14 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
-import android.os.Build
 import android.util.Log
 import com.droneedge.app.video.VideoFrame
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
-import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.Closeable
 import java.io.File
 import java.io.FileInputStream
@@ -33,11 +30,16 @@ import java.nio.channels.FileChannel
  */
 class TfliteDetector(
     context: Context,
-    private val modelFileName: String = "detect.tflite",
+    modelFileName: String = "detect.tflite",
     private val labelsFileName: String = "labelmap.txt",
-    val confidenceThreshold: Float = 0.5f,
+    var confidenceThreshold: Float = 0.5f,
     modelFile: File? = null,
 ) : Detector, Closeable {
+
+    private val appContext: Context = context.applicationContext
+
+    // Use the actual file name from disk when loading externally; fall back to asset name.
+    private val modelFileName: String = modelFile?.name ?: modelFileName
 
     private val delegate: Closeable?   // NnApiDelegate or GpuDelegate; null = CPU
     private val interpreter: Interpreter
@@ -47,6 +49,15 @@ class TfliteDetector(
     private val inputDataType: DataType
     private val outputParser: DetectionOutputParser
 
+    var delegateName: String = "CPU"
+        private set
+    private var gpuFailureReason: String? = null
+    val modelInfo: String get() = "$delegateName ${inputWidth}×${inputHeight}"
+
+    // Inference timing for the first 20 frames, written once to tflite_timing.txt.
+    private var inferenceCount = 0
+    private val timingLines = mutableListOf<String>()
+
     // Pre-allocated to avoid per-frame heap pressure on the inference hot path.
     private val inputBuffer: ByteBuffer
     private val pixels: IntArray
@@ -55,6 +66,13 @@ class TfliteDetector(
     private val scalingPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val srcRect = Rect()
     private val dstRect = Rect()
+
+    // Fast preprocessing: a 256-entry byte→float/255 lookup table (avoids 1.2M divisions/frame),
+    // a reusable float scratch array, and a FloatBuffer view over inputBuffer so the normalized
+    // pixels are written in ONE bulk copy instead of ~1.2M individual ByteBuffer.putFloat calls.
+    private val normLut = FloatArray(256) { it / 255f }
+    private val floatInput: FloatArray
+    private val floatView: java.nio.FloatBuffer?
 
     init {
         val model = if (modelFile != null) loadModelFromFile(modelFile)
@@ -88,20 +106,71 @@ class TfliteDetector(
         scaledBitmap = Bitmap.createBitmap(inputWidth, inputHeight, Bitmap.Config.ARGB_8888)
         scalingCanvas = Canvas(scaledBitmap)
         dstRect.set(0, 0, inputWidth, inputHeight)
+
+        // FLOAT32 models get the bulk-write fast path; UINT8 models pack bytes directly.
+        if (inputDataType == DataType.FLOAT32) {
+            floatInput = FloatArray(inputWidth * inputHeight * 3)
+            floatView  = inputBuffer.asFloatBuffer()
+        } else {
+            floatInput = FloatArray(0)
+            floatView  = null
+        }
+
+        // Write delegate info to the public logs folder so it's visible on the USB drive.
+        // Values are escaped (newlines → <NL>) so each log entry is exactly one line.
+        runCatching {
+            val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+            val lines = buildList {
+                add("build=v13-nal-reassembly")  // bump this tag each new APK so we know which one ran
+                add("model=$modelFileName")
+                add("delegate=$delegateName")
+                add("input=${inputWidth}x${inputHeight} $inputDataType")
+                gpuFailureReason?.let { add("gpuError=${it.replace("\n", "<NL>")}") }
+            }
+            File(logDir, "tflite_delegate.txt").printWriter().use { pw ->
+                lines.forEach { pw.println(it) }
+            }
+        }
     }
 
     override suspend fun detect(frame: VideoFrame): List<Detection> {
         val bitmap = frame.bitmap ?: return emptyList()
 
+        val tPre = android.os.SystemClock.elapsedRealtime()
         fillInputBuffer(bitmap)
+        val preMs = android.os.SystemClock.elapsedRealtime() - tPre
+
         val outputs = outputParser.allocateOutputs(maxDetections = 10)
         val outputMap = HashMap<Int, Any>(outputs.size).also { map ->
             outputs.forEachIndexed { i, o -> map[i] = o }
         }
 
+        val tInf = android.os.SystemClock.elapsedRealtime()
         interpreter.runForMultipleInputsOutputs(arrayOf(inputBuffer), outputMap)
+        val infMs = android.os.SystemClock.elapsedRealtime() - tInf
 
-        return outputParser.parse(outputs, labels, confidenceThreshold)
+        val tParse = android.os.SystemClock.elapsedRealtime()
+        val result = outputParser.parse(outputs, labels, confidenceThreshold)
+        val parseMs = android.os.SystemClock.elapsedRealtime() - tParse
+
+        recordTiming(preMs, infMs, parseMs)
+        return result
+    }
+
+    private fun recordTiming(preMs: Long, infMs: Long, parseMs: Long) {
+        val n = ++inferenceCount
+        if (n <= 20) {
+            timingLines += "[${n}] pre=${preMs} inf=${infMs} parse=${parseMs} total=${preMs + infMs + parseMs}ms"
+        }
+        // Write after every 5th inference (overwrite), so data exists even for short runs.
+        if (n % 5 == 0 || n == 1) {
+            runCatching {
+                val logDir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
+                File(logDir, "tflite_timing.txt").writeText(
+                    "delegate=$delegateName input=${inputWidth}x${inputHeight} n=$n\n${timingLines.joinToString("\n")}\n"
+                )
+            }
+        }
     }
 
     override fun close() {
@@ -113,46 +182,45 @@ class TfliteDetector(
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Tries delegates in priority order for this device:
-     *   1. NNAPI  — routes to Qualcomm Hexagon DSP/NPU (best on Snapdragon)
-     *   2. GPU    — Adreno via OpenGL ES (Adreno 750 on Tab S10+)
-     *   3. CPU    — 4 threads (always works)
-     *
-     * The winning delegate is stored so it can be closed when the detector is closed.
+     * Builds the interpreter, mirroring the proven Sirena setup:
+     *   1. GPU delegate — the fast path on Adreno 750 / Mali. The standard org.tensorflow
+     *      tensorflow-lite-gpu artifact bundles the real libtensorflowlite_gpu_jni.so (unlike
+     *      the LiteRT 1.0.1 stub that failed). With tensorflow-lite-select-tf-ops on the
+     *      classpath, the Flex delegate auto-loads (via reflection in NativeInterpreterWrapper)
+     *      to run any ops the GPU/builtin op set can't — this is what lets the YOLO model
+     *      run on GPU without op-unsupported failures.
+     *   2. CPU fallback — multi-threaded (used on emulators with no usable GPU, and as a
+     *      safety net if GPU init throws). Flex still auto-loads here too.
      */
     private fun buildInterpreter(model: MappedByteBuffer): Pair<Interpreter, Closeable?> {
-        // 1. NNAPI — available API 28+ (our minSdk), routes to Qualcomm Hexagon DSP/NPU
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            runCatching {
-                model.rewind()
-                val nnApi = NnApiDelegate()
-                val opts  = Interpreter.Options().apply { addDelegate(nnApi) }
-                Interpreter(model, opts) to nnApi
-            }.onSuccess {
-                Log.i(TAG, "inference: NNAPI (Hexagon DSP/NPU)")
-                return it
-            }.onFailure { Log.w(TAG, "NNAPI unavailable: ${it.message}") }
-        }
-
-        // 2. GPU delegate — Adreno 750 via OpenGL ES
-        runCatching {
+        // 1. GPU delegate. Allow FP16 precision + quantized models so FP16-quantized weights work.
+        run {
+            val gpu = runCatching {
+                GpuDelegate(GpuDelegate.Options().apply {
+                    setPrecisionLossAllowed(true)
+                    setQuantizedModelsAllowed(true)
+                })
+            }.getOrElse { e ->
+                gpuFailureReason = "gpuNew:${e.message?.take(120) ?: e.javaClass.simpleName}"
+                null
+            } ?: return@run
             model.rewind()
-            val compat = CompatibilityList()
-            val supported = compat.isDelegateSupportedOnThisDevice
-            compat.close()
-            if (supported) {
-                val gpu  = GpuDelegate()
-                val opts = Interpreter.Options().apply { addDelegate(gpu) }
-                Interpreter(model, opts) to gpu
-            } else null
-        }.getOrNull()?.let {
-            Log.i(TAG, "inference: GPU delegate (Adreno)")
-            return it
+            runCatching {
+                Interpreter(model, Interpreter.Options().apply { addDelegate(gpu) }) to gpu
+            }.onSuccess {
+                Log.i(TAG, "inference: GPU")
+                delegateName = "GPU"
+                return it
+            }.onFailure { e ->
+                gpu.close()
+                gpuFailureReason = "interpInit:${e.message?.take(300) ?: e.javaClass.simpleName}"
+            }
         }
 
-        // 3. CPU fallback
+        // 2. CPU fallback — 4 threads (balances throughput vs thermal on the tablet).
         model.rewind()
         Log.i(TAG, "inference: CPU (4 threads)")
+        delegateName = "CPU"
         return Interpreter(model, Interpreter.Options().apply { numThreads = 4 }) to null
     }
 
@@ -188,21 +256,31 @@ class TfliteDetector(
         srcRect.set(0, 0, bitmap.width, bitmap.height)
         scalingCanvas.drawBitmap(bitmap, srcRect, dstRect, scalingPaint)
         scaledBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, inputHeight)
-        inputBuffer.rewind()
-        for (pixel in pixels) {
-            val r = (pixel shr 16) and 0xFF
-            val g = (pixel shr 8)  and 0xFF
-            val b =  pixel         and 0xFF
-            if (inputDataType == DataType.FLOAT32) {
-                inputBuffer.putFloat(r / 255f)
-                inputBuffer.putFloat(g / 255f)
-                inputBuffer.putFloat(b / 255f)
-            } else {
-                inputBuffer.put(r.toByte())
-                inputBuffer.put(g.toByte())
-                inputBuffer.put(b.toByte())
+
+        val fv = floatView
+        if (fv != null) {
+            // FLOAT32 fast path: normalize via LUT into a flat float[], then ONE bulk copy into
+            // the direct buffer. Replaces ~1.2M individual putFloat calls (the old bottleneck).
+            val lut = normLut
+            val out = floatInput
+            var j = 0
+            for (pixel in pixels) {
+                out[j++] = lut[(pixel shr 16) and 0xFF]
+                out[j++] = lut[(pixel shr 8)  and 0xFF]
+                out[j++] = lut[ pixel         and 0xFF]
             }
+            fv.clear()
+            fv.put(out)
+            inputBuffer.rewind()
+        } else {
+            // UINT8 models (e.g. SSD MobileNet): pack RGB bytes directly.
+            inputBuffer.rewind()
+            for (pixel in pixels) {
+                inputBuffer.put(((pixel shr 16) and 0xFF).toByte())
+                inputBuffer.put(((pixel shr 8)  and 0xFF).toByte())
+                inputBuffer.put(( pixel         and 0xFF).toByte())
+            }
+            inputBuffer.rewind()
         }
-        inputBuffer.rewind()
     }
 }

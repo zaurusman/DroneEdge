@@ -62,8 +62,13 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.support)
     implementation(libs.tensorflow.lite.gpu)
+    implementation(libs.tensorflow.lite.gpu.api)
+    // Flex delegate (select TF ops) — auto-loads via reflection in NativeInterpreterWrapper
+    // when present, covering any ops the GPU/builtin op set can't run. This is the key piece
+    // that lets the YOLO model run on the GPU delegate without op-unsupported failures.
+    implementation(libs.tensorflow.lite.select.tf.ops)
+    implementation(libs.tensorflow.lite.support)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     testImplementation(libs.junit)

@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 /**
  * Replaceable source of video frames.
  *
- * Implementations: FakeVideoSource, FileReplayVideoSource, CameraVideoSource,
+ * Implementations: FakeVideoSource, FileMediaCodecVideoSource, CameraVideoSource,
  * UsbUvcVideoSource, DjiGogglesVideoSource.
  */
 interface VideoSource {

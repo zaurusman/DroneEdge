@@ -22,11 +22,14 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -71,11 +74,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import com.droneedge.app.detection.Detection
 import com.droneedge.app.ui.theme.FieldAccent
 import com.droneedge.app.ui.theme.FieldBackground
@@ -115,8 +113,10 @@ fun LiveScreen(
     val previewFps      by vm.previewFps.collectAsStateWithLifecycle()
     val inferenceFps    by vm.inferenceFps.collectAsStateWithLifecycle()
     val videoUri        by vm.videoUri.collectAsStateWithLifecycle()
-    val detectorMode    by vm.detectorMode.collectAsStateWithLifecycle()
-    val activeModelFile by vm.activeModelFile.collectAsStateWithLifecycle()
+    val detectorMode          by vm.detectorMode.collectAsStateWithLifecycle()
+    val activeModelFile       by vm.activeModelFile.collectAsStateWithLifecycle()
+    val confidenceThreshold   by vm.confidenceThreshold.collectAsStateWithLifecycle()
+    val detectorInfo          by vm.detectorInfo.collectAsStateWithLifecycle()
     val error           by vm.error.collectAsStateWithLifecycle()
     val recordingState   by vm.recordingState.collectAsStateWithLifecycle()
     val lastRecording    by vm.lastRecording.collectAsStateWithLifecycle()
@@ -297,14 +297,13 @@ fun LiveScreen(
 
         // ── Background ────────────────────────────────────────────────────────
         when {
-            videoUri != null -> VideoPlayer(
-                uri       = videoUri!!,
-                isPlaying = sessionState == SessionState.RUNNING,
+            videoUri != null -> RenderSurfaceView(
                 modifier  = Modifier.fillMaxSize(),
+                onSurface = { vm.setRenderSurface(it) },
             )
-            djiDevice != null || djiAccessory != null -> DjiSurfaceView(
+            djiDevice != null || djiAccessory != null -> RenderSurfaceView(
                 modifier  = Modifier.fillMaxSize(),
-                onSurface = { vm.setDjiSurface(it) },
+                onSurface = { vm.setRenderSurface(it) },
             )
             cameraFacing != null -> CameraFrameDisplay(
                 frames   = vm.latestFrame,
@@ -355,7 +354,7 @@ fun LiveScreen(
             )
         }
 
-        // ── HUD top-right: FPS ────────────────────────────────────────────────
+        // ── HUD top-right: FPS + confidence tuning ───────────────────────────
         Column(
             modifier            = Modifier
                 .align(Alignment.TopEnd)
@@ -371,10 +370,43 @@ fun LiveScreen(
                 letterSpacing = 1.sp,
             )
             Text(
-                text  = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
-                color = hudColor,
+                text     = "PRV ${"%.1f".format(previewFps)}   INF ${"%.1f".format(inferenceFps)}",
+                color    = hudColor,
                 fontSize = 11.sp,
             )
+            if (detectorMode == DetectorMode.TFLITE || detectorMode == DetectorMode.NORTH) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text     = "CONF ${"%.2f".format(confidenceThreshold)}",
+                        color    = hudColor,
+                        fontSize = 9.sp,
+                        letterSpacing = 0.5.sp,
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text     = "−",
+                        color    = FieldAccent,
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable { vm.setConfidenceThreshold(confidenceThreshold - 0.05f) },
+                    )
+                    Text(
+                        text     = "+",
+                        color    = FieldAccent,
+                        fontSize = 13.sp,
+                        modifier = Modifier.clickable { vm.setConfidenceThreshold(confidenceThreshold + 0.05f) },
+                    )
+                }
+                if (detectorInfo.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text     = detectorInfo,
+                        color    = hudColor,
+                        fontSize = 9.sp,
+                        letterSpacing = 0.5.sp,
+                    )
+                }
+            }
         }
 
         // ── Bottom bar ────────────────────────────────────────────────────────
@@ -631,10 +663,10 @@ private fun RecButton(
     }
 }
 
-// ── DJI Surface view — MediaCodec renders H.264 directly to GPU, no CPU copy ──
+// ── Render surface view — MediaCodec renders H.264 directly to GPU, no CPU copy ──
 
 @Composable
-private fun DjiSurfaceView(
+private fun RenderSurfaceView(
     modifier: Modifier = Modifier,
     onSurface: (android.view.Surface?) -> Unit,
 ) {
@@ -649,34 +681,6 @@ private fun DjiSurfaceView(
                 })
             }
         },
-    )
-}
-
-// ── Video player ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun VideoPlayer(uri: Uri, isPlaying: Boolean, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val exoPlayer = remember(uri) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            repeatMode    = Player.REPEAT_MODE_ONE
-            playWhenReady = false
-            prepare()
-        }
-    }
-    LaunchedEffect(isPlaying) { exoPlayer.playWhenReady = isPlaying }
-    DisposableEffect(uri) { onDispose { exoPlayer.release() } }
-    AndroidView(
-        modifier = modifier,
-        factory  = { ctx ->
-            PlayerView(ctx).apply {
-                player        = exoPlayer
-                useController = false
-                resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-            }
-        },
-        update = { it.player = exoPlayer },
     )
 }
 

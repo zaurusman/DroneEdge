@@ -146,12 +146,33 @@ class VideoSessionRecorder : SessionRecorder {
 
                 val inputIdx = enc.dequeueInputBuffer(10_000L)
                 if (inputIdx >= 0) {
-                    val yuv = bitmapToI420(scaled)
-                    val buf = enc.getInputBuffer(inputIdx)!!
-                    buf.clear()
-                    buf.put(yuv)
                     val ptsUs = (frame.timestampMs - firstTimestampMs) * 1_000L
-                    enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    // Prefer getInputImage() — it exposes the encoder's actual plane strides and
+                    // chroma layout (NV12 semi-planar on the Samsung/Adreno hardware AVC encoder),
+                    // so rows land at the right offsets. Dumping tightly-packed I420 via
+                    // getInputBuffer() ignores stride/pixelStride → green + wrong-colour patches.
+                    // Fall back to the raw ByteBuffer path only if the image API is unavailable
+                    // (software encoder).
+                    // Capture the input buffer's full (strided) capacity first: this is the
+                    // byte count the encoder must be told it received. getInputImage()
+                    // invalidates this ByteBuffer, so read its capacity before filling the Image.
+                    val inputCapacity = enc.getInputBuffer(inputIdx)?.capacity() ?: 0
+                    val image = enc.getInputImage(inputIdx)
+                    if (image != null) {
+                        val nv12 = bitmapToNv12(scaled)
+                        writeNv12ToImage(nv12, image, encodedWidth, encodedHeight)
+                        // Pass the real frame size, NOT 0. A software encoder (e.g. the emulator's
+                        // c2.android.avc.encoder) given size 0 reads no pixels, emits no output and
+                        // then never produces an end-of-stream buffer, hanging stop() forever.
+                        val size = if (inputCapacity > 0) inputCapacity else nv12.size
+                        enc.queueInputBuffer(inputIdx, 0, size, ptsUs, 0)
+                    } else {
+                        val yuv = bitmapToI420(scaled)
+                        val buf = enc.getInputBuffer(inputIdx)!!
+                        buf.clear()
+                        buf.put(yuv)
+                        enc.queueInputBuffer(inputIdx, 0, yuv.size, ptsUs, 0)
+                    }
                 }
                 if (scaled !== annotated) scaled.recycle()
                 annotated.recycle()

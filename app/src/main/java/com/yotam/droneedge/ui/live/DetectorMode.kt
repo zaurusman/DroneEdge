@@ -51,9 +51,9 @@ object ModelRegistry {
         ),
         ModelDescriptor(
             mode        = DetectorMode.NORTH,
-            displayName = "North — Custom Model",
+            displayName = "North — FP16",
             shortLabel  = "North",
-            description = "Custom bundled model (north_20260419.tflite).",
+            description = "Custom model, FP16 quantized weights (north_20260419.tflite).",
             assetFile   = "north_20260419.tflite",
         ),
     )

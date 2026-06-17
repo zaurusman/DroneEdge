@@ -19,7 +19,7 @@ import com.droneedge.app.recording.renameSession
 import com.droneedge.app.recording.sanitizeSessionName
 import com.droneedge.app.video.CameraVideoSource
 import com.droneedge.app.video.FakeVideoSource
-import com.droneedge.app.video.FileReplayVideoSource
+import com.droneedge.app.video.FileMediaCodecVideoSource
 import com.droneedge.app.video.DjiGogglesVideoSource
 import com.droneedge.app.video.UsbUvcVideoSource
 import com.droneedge.app.video.VideoFrame
@@ -68,9 +68,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _djiAccessory = MutableStateFlow<android.hardware.usb.UsbAccessory?>(null)
     val djiAccessory: StateFlow<android.hardware.usb.UsbAccessory?> = _djiAccessory.asStateFlow()
 
-    // ── Surface for DJI GPU-direct rendering ─────────────────────────────────
-    private val _djiSurface = MutableStateFlow<android.view.Surface?>(null)
-    fun setDjiSurface(surface: android.view.Surface?) { _djiSurface.value = surface }
+    // ── Display surface for surface-based sources (DJI + file MediaCodec) ──────
+    private val _renderSurface = MutableStateFlow<android.view.Surface?>(null)
+    fun setRenderSurface(surface: android.view.Surface?) { _renderSurface.value = surface }
 
     // ── Camera facing (null = no camera source) ───────────────────────────────
     private val _cameraFacing = MutableStateFlow<Int?>(null)
@@ -83,6 +83,20 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     // ── Active external model file (null = bundled asset) ─────────────────────
     private val _activeModelFile = MutableStateFlow<File?>(null)
     val activeModelFile: StateFlow<File?> = _activeModelFile.asStateFlow()
+
+    // ── Confidence threshold (applies to active TFLite detector) ─────────────
+    private val _confidenceThreshold = MutableStateFlow(0.5f)
+    val confidenceThreshold: StateFlow<Float> = _confidenceThreshold.asStateFlow()
+
+    // ── Delegate / model info (e.g. "GPU-FP16 640×640") ─────────────────────
+    private val _detectorInfo = MutableStateFlow("")
+    val detectorInfo: StateFlow<String> = _detectorInfo.asStateFlow()
+
+    fun setConfidenceThreshold(value: Float) {
+        val clamped = value.coerceIn(0.05f, 0.95f)
+        _confidenceThreshold.value = clamped
+        tfliteDetector?.confidenceThreshold = clamped
+    }
 
     // ── Error message (null = no error) ───────────────────────────────────────
     private val _error = MutableStateFlow<String?>(null)
@@ -119,6 +133,14 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val _latestFrame = MutableStateFlow<VideoFrame?>(null)
     val latestFrame: StateFlow<VideoFrame?> = _latestFrame.asStateFlow()
 
+    // ── Latest frame that actually carries a bitmap, for the inference loop ───
+    // Sources like the DJI stream emit many null-bitmap frames between captures.
+    // Feeding inference off _latestFrame lets those nulls conflate away the real
+    // bitmap frames (StateFlow keeps only the latest value). This dedicated flow
+    // only ever holds bitmap-bearing frames, so conflation drops an OLD bitmap for
+    // a NEWER one (desired) instead of losing bitmaps to nulls.
+    private val _inferenceFrame = MutableStateFlow<VideoFrame?>(null)
+
     private val previewFrameTimes = ArrayDeque<Long>()
     private val inferenceFrameTimes = ArrayDeque<Long>()
     private var pipelineJob: Job? = null
@@ -132,7 +154,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun useFileSource(uri: Uri, context: android.content.Context) {
         if (_sessionState.value != SessionState.IDLE) return
-        videoSource      = FileReplayVideoSource(uri, context.applicationContext)
+        videoSource      = FileMediaCodecVideoSource(uri, context.applicationContext)
         _videoUri.value  = uri
         _usbDevice.value = null
         _cameraFacing.value = null
@@ -292,6 +314,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 detector = object : Detector { override suspend fun detect(frame: VideoFrame) = emptyList<Detection>() }
                 _detectorMode.value = DetectorMode.NO_MODEL
                 _activeModelFile.value = null
+                _confidenceThreshold.value = 0.5f
+                _detectorInfo.value = ""
                 _error.value = null
             }
             DetectorMode.FAKE -> {
@@ -300,6 +324,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 detector = FakeDetector()
                 _detectorMode.value = DetectorMode.FAKE
                 _activeModelFile.value = null
+                _detectorInfo.value = ""
                 _error.value = null
             }
             DetectorMode.TFLITE -> {
@@ -312,6 +337,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         detector = tfd
                         _detectorMode.value = DetectorMode.TFLITE
                         _activeModelFile.value = modelFile
+                        _detectorInfo.value = tfd.modelInfo
                         _error.value = null
                     } catch (e: Throwable) {
                         _error.value = "TFLite load failed: ${e.message}"
@@ -322,12 +348,16 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                 if (context == null) return
                 viewModelScope.launch(Dispatchers.IO) {
                     try {
-                        val tfd = TfliteDetector(context.applicationContext, modelFileName = "north_20260419.tflite")
+                        val tfd = TfliteDetector(
+                            context.applicationContext,
+                            modelFileName = "north_20260419.tflite",
+                        )
                         tfliteDetector?.close()
                         tfliteDetector = tfd
                         detector = tfd
                         _detectorMode.value = DetectorMode.NORTH
                         _activeModelFile.value = null
+                        _detectorInfo.value = tfd.modelInfo
                         _error.value = null
                     } catch (e: Throwable) {
                         _error.value = "TFLite load failed: ${e.message}"
@@ -423,7 +453,17 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             videoSource = com.droneedge.app.video.DjiGogglesAccessorySource(
                 context        = getApplication<android.app.Application>().applicationContext,
                 accessory      = acc,
-                renderSurface  = _djiSurface.value,
+                renderSurface  = _renderSurface.value,
+            )
+        }
+
+        // For a file source, re-create it with the display Surface that Compose has set up
+        // by the time the user presses START (mirrors the DJI accessory path).
+        _videoUri.value?.let { uri ->
+            videoSource = com.droneedge.app.video.FileMediaCodecVideoSource(
+                uri           = uri,
+                context       = getApplication<android.app.Application>().applicationContext,
+                renderSurface = _renderSurface.value,
             )
         }
 
@@ -444,6 +484,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                             previewFrameTimes.removeFirst()
                         _previewFps.value = previewFrameTimes.size.toFloat()
                         _latestFrame.value = frame
+                        // Only forward bitmap-bearing frames to inference so null frames
+                        // can't conflate the real ones away (see _inferenceFrame).
+                        if (frame.bitmap != null) _inferenceFrame.value = frame
 
                         if (_recordingState.value == RecordingState.ARMED) {
                             recorder?.onFrame(frame, _detections.value)
@@ -465,7 +508,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             // Coroutine 2: run inference on latest available frame; skips frames
             // automatically when inference is slower than the source frame rate.
             launch(Dispatchers.Default) {
-                _latestFrame.filterNotNull().collect { frame ->
+                _inferenceFrame.filterNotNull().collect { frame ->
+                    if (frame.bitmap == null) return@collect  // keep last detections visible
                     val results = detector.detect(frame)
                     _detections.value = results
 
@@ -494,6 +538,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _previewFps.value = 0f
         _inferenceFps.value = 0f
         _latestFrame.value = null
+        _inferenceFrame.value = null
         _sessionState.value = SessionState.IDLE
     }
 
