@@ -19,7 +19,6 @@ import com.droneedge.app.recording.renameSession
 import com.droneedge.app.recording.sanitizeSessionName
 import com.droneedge.app.video.CameraVideoSource
 import com.droneedge.app.video.FakeVideoSource
-import com.droneedge.app.video.FileReplayVideoSource
 import com.droneedge.app.video.FileMediaCodecVideoSource
 import com.droneedge.app.video.DjiGogglesVideoSource
 import com.droneedge.app.video.UsbUvcVideoSource

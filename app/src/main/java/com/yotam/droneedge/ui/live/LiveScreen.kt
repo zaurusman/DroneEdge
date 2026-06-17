@@ -74,11 +74,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import com.droneedge.app.detection.Detection
 import com.droneedge.app.ui.theme.FieldAccent
 import com.droneedge.app.ui.theme.FieldBackground
@@ -686,34 +681,6 @@ private fun RenderSurfaceView(
                 })
             }
         },
-    )
-}
-
-// ── Video player ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun VideoPlayer(uri: Uri, isPlaying: Boolean, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val exoPlayer = remember(uri) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            repeatMode    = Player.REPEAT_MODE_ONE
-            playWhenReady = false
-            prepare()
-        }
-    }
-    LaunchedEffect(isPlaying) { exoPlayer.playWhenReady = isPlaying }
-    DisposableEffect(uri) { onDispose { exoPlayer.release() } }
-    AndroidView(
-        modifier = modifier,
-        factory  = { ctx ->
-            PlayerView(ctx).apply {
-                player        = exoPlayer
-                useController = false
-                resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-            }
-        },
-        update = { it.player = exoPlayer },
     )
 }
 
