@@ -390,7 +390,15 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     fun armRecording() {
         if (!canArm(_sessionState.value, _recordingState.value)) return
-        val rec = recorderFactory()
+        // DJI streams record by muxing the raw drone H.264 (passthrough) — full-res, no re-encode.
+        val src = videoSource
+        val rec: SessionRecorder = if (src is com.droneedge.app.video.DjiGogglesAccessorySource) {
+            com.droneedge.app.recording.H264PassthroughRecorder().also { passthrough ->
+                src.encodedSink = { nal, type -> passthrough.onEncodedSample(nal, type) }
+            }
+        } else {
+            recorderFactory()
+        }
         recorder = rec
         _recordingElapsedMs.value = 0L
         timerJob = viewModelScope.launch {
@@ -410,6 +418,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         timerJob = null
         if (!canDisarm(_recordingState.value)) return
         val rec = recorder ?: return
+        // Stop teeing NALs before finalizing the muxer.
+        (videoSource as? com.droneedge.app.video.DjiGogglesAccessorySource)?.encodedSink = null
         _recordingState.value = RecordingState.FINALIZING
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { rec.stop() }
