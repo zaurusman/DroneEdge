@@ -1,6 +1,5 @@
 package com.droneedge.app.recording
 
-import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -11,10 +10,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.os.ParcelFileDescriptor
-import android.provider.MediaStore
 import com.droneedge.app.detection.Detection
 import com.droneedge.app.video.VideoFrame
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +18,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedWriter
-import java.io.File
-import java.io.FileWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,12 +84,15 @@ class VideoSessionRecorder : SessionRecorder {
             labelStripH          = labelPaint.textSize * 1.5f
 
             firstTimestampMs = System.currentTimeMillis()
-            jsonWriter = openJsonWriter(context.applicationContext)
+            val jf = RecordingStorage.openJsonWriter(context.applicationContext, sessionName)
+            jsonWriter = jf.writer
+            jsonRowUri = jf.uri
             jsonWriter?.appendLine("""{"sessionStart":$firstTimestampMs}""")
 
-            val pfd = openVideoFile(context.applicationContext)
-            videoFd = pfd
-            muxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val vf = RecordingStorage.openVideoFile(context.applicationContext, sessionName)
+            videoFd = vf.pfd
+            videoRowUri = vf.uri
+            muxer = MediaMuxer(vf.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
             val format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, encodedWidth, encodedHeight
@@ -264,55 +261,8 @@ class VideoSessionRecorder : SessionRecorder {
 
     // ── Storage helpers ───────────────────────────────────────────────────────
 
-    private fun openVideoFile(context: Context): ParcelFileDescriptor {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val cv = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, "annotated.mp4")
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/DroneEdge/$sessionName/")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            val uri = context.contentResolver.insert(
-                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv
-            ) ?: error("MediaStore insert failed for video")
-            videoRowUri = uri
-            context.contentResolver.openFileDescriptor(uri, "rw")
-                ?: error("Cannot open file descriptor for $uri")
-        } else {
-            val dir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                "DroneEdge/$sessionName"
-            ).also { it.mkdirs() }
-            val file = File(dir, "annotated.mp4")
-            videoRowUri = Uri.fromFile(file)
-            ParcelFileDescriptor.open(
-                file,
-                ParcelFileDescriptor.MODE_READ_WRITE or ParcelFileDescriptor.MODE_CREATE
-            )
-        }
-    }
-
-    private fun openJsonWriter(context: Context): BufferedWriter {
-        // MediaStore.Files rejects Movies/ on API 29+; use app external files dir instead —
-        // accessible via adb, no permission needed at any API level.
-        val dir = File(context.getExternalFilesDir(null), "recordings/$sessionName")
-            .also { it.mkdirs() }
-        val file = File(dir, "detections.json")
-        jsonRowUri = Uri.fromFile(file)
-        return BufferedWriter(FileWriter(file))
-    }
-
     private fun finalizeMediaStore() {
         val ctx = appContext ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            videoRowUri?.let { uri ->
-                ctx.contentResolver.update(
-                    uri,
-                    ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) },
-                    null, null
-                )
-            }
-            // JSON is written to getExternalFilesDir — no MediaStore row to finalize.
-        }
+        videoRowUri?.let { RecordingStorage.finalizeVideo(ctx, it) }
     }
 }
