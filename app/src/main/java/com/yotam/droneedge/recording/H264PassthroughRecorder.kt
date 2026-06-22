@@ -33,7 +33,7 @@ import java.util.Locale
  */
 class H264PassthroughRecorder : SessionRecorder {
 
-    private data class Sample(val data: ByteArray, val tsMs: Long, val type: Int)
+    private class Sample(val data: ByteArray, val tsMs: Long, val type: Int)
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val samples = Channel<Sample>(Channel.UNLIMITED)
@@ -71,17 +71,31 @@ class H264PassthroughRecorder : SessionRecorder {
             sessionStartMs = System.currentTimeMillis()
             stopped = false
 
-            val vf = RecordingStorage.openVideoFile(appContext!!, sessionName)
-            videoFd = vf.pfd
-            videoUri = vf.uri
-            muxer = MediaMuxer(vf.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            try {
+                val vf = RecordingStorage.openVideoFile(appContext!!, sessionName)
+                videoFd = vf.pfd
+                videoUri = vf.uri
+                muxer = MediaMuxer(vf.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
-            val jf = RecordingStorage.openJsonWriter(appContext!!, sessionName)
-            jsonWriter = jf.writer
-            jsonUri = jf.uri
-            jsonWriter?.appendLine("""{"sessionStart":$sessionStartMs}""")
+                val jf = RecordingStorage.openJsonWriter(appContext!!, sessionName)
+                jsonWriter = jf.writer
+                jsonUri = jf.uri
+                jsonWriter?.appendLine("""{"sessionStart":$sessionStartMs}""")
 
-            consumerJob = scope.launch { consume() }
+                consumerJob = scope.launch { consume() }
+            } catch (e: Throwable) {
+                runCatching { muxer?.release() }
+                muxer = null
+                runCatching { jsonWriter?.close() }
+                jsonWriter = null
+                runCatching { videoFd?.close() }
+                videoFd = null
+                // Remove the orphaned pending MediaStore row so it doesn't linger.
+                videoUri?.let { u -> runCatching { appContext?.contentResolver?.delete(u, null, null) } }
+                videoUri = null
+                scope.cancel()
+                throw e
+            }
             Unit
         }
 
@@ -127,9 +141,11 @@ class H264PassthroughRecorder : SessionRecorder {
             set(0, s.data.size, ptsUs,
                 if (s.type == H264NalParser.NAL_IDR) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
-        runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }
-        frameCount++
-        lastTsMs = s.tsMs
+        val ok = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }.isSuccess
+        if (ok) {
+            frameCount++
+            lastTsMs = s.tsMs
+        }
     }
 
     override suspend fun onFrame(frame: VideoFrame, detections: List<Detection>) {
