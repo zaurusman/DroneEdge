@@ -69,7 +69,8 @@ class H264PassthroughRecorder : SessionRecorder {
     private var pps: ByteArray? = null
     private var frameCount = 0
     private var lastTsMs = 0L
-    private var lastPtsUs = -1L
+    private var nextPtsUs = 0L
+    private var frameIntervalUs = 33333L
 
     @Volatile private var stopped = false
 
@@ -78,6 +79,7 @@ class H264PassthroughRecorder : SessionRecorder {
             appContext = context.applicationContext
             declaredWidth = width
             declaredHeight = height
+            frameIntervalUs = if (fps > 0) 1_000_000L / fps else 33333L
             sessionName = "session_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             sessionStartMs = System.currentTimeMillis()
             stopped = false
@@ -141,8 +143,8 @@ class H264PassthroughRecorder : SessionRecorder {
                         log?.println("  PPS=[${hex(ppsv)}]")
                         log?.println("  IDR=[${hex(s.data)}]")
                         val fmt = MediaFormat.createVideoFormat("video/avc", declaredWidth, declaredHeight).apply {
-                            setByteBuffer("csd-0", ByteBuffer.wrap(spsv))
-                            setByteBuffer("csd-1", ByteBuffer.wrap(ppsv))
+                            setByteBuffer("csd-0", ByteBuffer.wrap(ensure4ByteStartCode(spsv)))
+                            setByteBuffer("csd-1", ByteBuffer.wrap(ensure4ByteStartCode(ppsv)))
                         }
                         trackIndex = mx.addTrack(fmt)
                         log?.println("addTrack -> $trackIndex; calling start()")
@@ -169,18 +171,17 @@ class H264PassthroughRecorder : SessionRecorder {
 
     private fun writeSample(s: Sample) {
         val mx = muxer ?: return
-        // PTS MUST be strictly increasing — MediaMuxer (esp. MediaTek) native-aborts on equal/
-        // decreasing timestamps. Wall-clock receipt times can collide within a millisecond, so
-        // clamp each sample above the previous one (keeps ~real timing, guarantees monotonic).
-        var ptsUs = (s.tsMs - sessionStartMs) * 1000L
-        if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1000L
-        lastPtsUs = ptsUs
+        val data = ensure4ByteStartCode(s.data)
+        // Fixed-interval PTS, matching the proven Sirena recorder (g=33333µs @ 30fps). Always
+        // monotonic — avoids the MediaMuxer native-abort on equal/decreasing timestamps.
+        val ptsUs = nextPtsUs
+        nextPtsUs += frameIntervalUs
         val info = MediaCodec.BufferInfo().apply {
-            set(0, s.data.size, ptsUs,
+            set(0, data.size, ptsUs,
                 if (s.type == H264NalParser.NAL_IDR) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
-        if (frameCount < 20) log?.println("write #$frameCount type=${s.type} pts=$ptsUs size=${s.data.size}")
-        val r = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }
+        if (frameCount < 200) log?.println("write #$frameCount type=${s.type} pts=$ptsUs size=${data.size}")
+        val r = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(data), info) }
         if (r.isSuccess) {
             frameCount++
             lastTsMs = s.tsMs
@@ -188,6 +189,15 @@ class H264PassthroughRecorder : SessionRecorder {
             log?.println("writeSampleData failed @frame$frameCount: ${r.exceptionOrNull()?.stackTraceToString()}")
         }
     }
+
+    /** MediaMuxer csd/samples expect 4-byte Annex-B start codes; the DJI stream emits 3-byte
+     *  ones (00 00 01). Prepend a zero so they become 00 00 00 01. */
+    private fun ensure4ByteStartCode(nal: ByteArray): ByteArray =
+        if (nal.size >= 3 && nal[0] == 0.toByte() && nal[1] == 0.toByte() && nal[2] == 1.toByte()) {
+            ByteArray(nal.size + 1).also { System.arraycopy(nal, 0, it, 1, nal.size) }
+        } else {
+            nal
+        }
 
     override suspend fun onFrame(frame: VideoFrame, detections: List<Detection>) {
         if (stopped || detections.isEmpty()) return
