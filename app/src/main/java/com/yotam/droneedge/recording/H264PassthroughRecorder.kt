@@ -81,7 +81,7 @@ class H264PassthroughRecorder : SessionRecorder {
             sessionStartMs = System.currentTimeMillis()
             stopped = false
             log = runCatching {
-                val dir = appContext!!.getExternalFilesDir("logs").also { it?.mkdirs() }
+                val dir = com.droneedge.app.MainActivity.droneEdgeLogsDir().also { it.mkdirs() }
                 PrintWriter(FileWriter(File(dir, "passthrough_log.txt"), false), true)
             }.getOrNull()
             log?.println("=== passthrough start ${declaredWidth}x${declaredHeight} @ $sessionStartMs ===")
@@ -134,7 +134,11 @@ class H264PassthroughRecorder : SessionRecorder {
                     // Start the track only once we have parameter sets AND a keyframe to begin from.
                     if (spsv != null && ppsv != null && s.type == H264NalParser.NAL_IDR) {
                         val mx = muxer ?: continue
+                        fun hex(b: ByteArray) = b.take(20).joinToString(" ") { "%02x".format(it) }
                         log?.println("starting muxer ${declaredWidth}x${declaredHeight} csd0=${spsv.size} csd1=${ppsv.size} firstIdr=${s.data.size}B")
+                        log?.println("  SPS=[${hex(spsv)}]")
+                        log?.println("  PPS=[${hex(ppsv)}]")
+                        log?.println("  IDR=[${hex(s.data)}]")
                         val fmt = MediaFormat.createVideoFormat("video/avc", declaredWidth, declaredHeight).apply {
                             setByteBuffer("csd-0", ByteBuffer.wrap(spsv))
                             setByteBuffer("csd-1", ByteBuffer.wrap(ppsv))
