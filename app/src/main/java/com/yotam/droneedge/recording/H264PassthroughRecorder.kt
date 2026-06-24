@@ -69,6 +69,7 @@ class H264PassthroughRecorder : SessionRecorder {
     private var pps: ByteArray? = null
     private var frameCount = 0
     private var lastTsMs = 0L
+    private var lastPtsUs = -1L
 
     @Volatile private var stopped = false
 
@@ -168,11 +169,17 @@ class H264PassthroughRecorder : SessionRecorder {
 
     private fun writeSample(s: Sample) {
         val mx = muxer ?: return
-        val ptsUs = (s.tsMs - sessionStartMs) * 1000L
+        // PTS MUST be strictly increasing — MediaMuxer (esp. MediaTek) native-aborts on equal/
+        // decreasing timestamps. Wall-clock receipt times can collide within a millisecond, so
+        // clamp each sample above the previous one (keeps ~real timing, guarantees monotonic).
+        var ptsUs = (s.tsMs - sessionStartMs) * 1000L
+        if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1000L
+        lastPtsUs = ptsUs
         val info = MediaCodec.BufferInfo().apply {
             set(0, s.data.size, ptsUs,
                 if (s.type == H264NalParser.NAL_IDR) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
+        if (frameCount < 20) log?.println("write #$frameCount type=${s.type} pts=$ptsUs size=${s.data.size}")
         val r = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }
         if (r.isSuccess) {
             frameCount++
