@@ -224,8 +224,11 @@ class DjiGogglesAccessorySource(
                                         val nx = nextStartCode(vbuf, ns + 3, lastSc)
                                         val ne = if (nx < 0) lastSc else nx
                                         encodedSink?.let { sink ->
-                                            val nal = vbuf.copyOfRange(ns, ne)
-                                            sink(nal, H264NalParser.nalType(nal))
+                                            // Never let a recording fault kill the live stream.
+                                            runCatching {
+                                                val nal = vbuf.copyOfRange(ns, ne)
+                                                sink(nal, H264NalParser.nalType(nal))
+                                            }
                                         }
                                         val inputIdx = try { codec.dequeueInputBuffer(10_000) }
                                                        catch (e: IllegalStateException) { -1 }

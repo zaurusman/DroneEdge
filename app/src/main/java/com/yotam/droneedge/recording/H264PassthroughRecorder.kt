@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import com.droneedge.app.detection.Detection
 import com.droneedge.app.video.H264NalParser
 import com.droneedge.app.video.VideoFrame
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedWriter
+import java.io.File
+import java.io.FileWriter
+import java.io.PrintWriter
 import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -35,7 +39,13 @@ class H264PassthroughRecorder : SessionRecorder {
 
     private class Sample(val data: ByteArray, val tsMs: Long, val type: Int)
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // A recording fault must NEVER crash the app / kill the live stream. This handler is the
+    // last-resort net for the consumer coroutine; consume() also try/catches internally.
+    private var log: PrintWriter? = null
+    private val errHandler = CoroutineExceptionHandler { _, e ->
+        log?.println("FATAL recorder coroutine: ${e.stackTraceToString()}"); log?.flush()
+    }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + errHandler)
     private val samples = Channel<Sample>(Channel.UNLIMITED)
     private val jsonLock = Mutex()
 
@@ -70,6 +80,11 @@ class H264PassthroughRecorder : SessionRecorder {
             sessionName = "session_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             sessionStartMs = System.currentTimeMillis()
             stopped = false
+            log = runCatching {
+                val dir = appContext!!.getExternalFilesDir("logs").also { it?.mkdirs() }
+                PrintWriter(FileWriter(File(dir, "passthrough_log.txt"), false), true)
+            }.getOrNull()
+            log?.println("=== passthrough start ${declaredWidth}x${declaredHeight} @ $sessionStartMs ===")
 
             try {
                 val vf = RecordingStorage.openVideoFile(appContext!!, sessionName)
@@ -84,6 +99,7 @@ class H264PassthroughRecorder : SessionRecorder {
 
                 consumerJob = scope.launch { consume() }
             } catch (e: Throwable) {
+                log?.println("start() failed: ${e.stackTraceToString()}")
                 runCatching { muxer?.release() }
                 muxer = null
                 runCatching { jsonWriter?.close() }
@@ -106,31 +122,43 @@ class H264PassthroughRecorder : SessionRecorder {
     }
 
     private suspend fun consume() {
-        for (s in samples) {
-            when (s.type) {
-                H264NalParser.NAL_SPS -> if (sps == null) sps = s.data
-                H264NalParser.NAL_PPS -> if (pps == null) pps = s.data
-            }
-            if (!started) {
-                val spsv = sps
-                val ppsv = pps
-                // Start the track only once we have parameter sets AND a keyframe to begin from.
-                if (spsv != null && ppsv != null && s.type == H264NalParser.NAL_IDR) {
-                    val mx = muxer ?: continue
-                    val fmt = MediaFormat.createVideoFormat("video/avc", declaredWidth, declaredHeight).apply {
-                        setByteBuffer("csd-0", ByteBuffer.wrap(spsv))
-                        setByteBuffer("csd-1", ByteBuffer.wrap(ppsv))
+        try {
+            for (s in samples) {
+                when (s.type) {
+                    H264NalParser.NAL_SPS -> if (sps == null) { sps = s.data; log?.println("SPS ${s.data.size}B") }
+                    H264NalParser.NAL_PPS -> if (pps == null) { pps = s.data; log?.println("PPS ${s.data.size}B") }
+                }
+                if (!started) {
+                    val spsv = sps
+                    val ppsv = pps
+                    // Start the track only once we have parameter sets AND a keyframe to begin from.
+                    if (spsv != null && ppsv != null && s.type == H264NalParser.NAL_IDR) {
+                        val mx = muxer ?: continue
+                        log?.println("starting muxer ${declaredWidth}x${declaredHeight} csd0=${spsv.size} csd1=${ppsv.size} firstIdr=${s.data.size}B")
+                        val fmt = MediaFormat.createVideoFormat("video/avc", declaredWidth, declaredHeight).apply {
+                            setByteBuffer("csd-0", ByteBuffer.wrap(spsv))
+                            setByteBuffer("csd-1", ByteBuffer.wrap(ppsv))
+                        }
+                        trackIndex = mx.addTrack(fmt)
+                        log?.println("addTrack -> $trackIndex; calling start()")
+                        mx.start()
+                        started = true
+                        log?.println("muxer started; writing first sample")
+                        writeSample(s)
+                        log?.println("first sample written (frameCount=$frameCount)")
                     }
-                    trackIndex = mx.addTrack(fmt)
-                    mx.start()
-                    started = true
+                    // else: drop NALs before the first keyframe.
+                } else if (s.type == 1 || s.type == H264NalParser.NAL_IDR) {
+                    // Write only VCL slices (non-IDR=1, IDR=5). SPS/PPS already in csd.
                     writeSample(s)
                 }
-                // else: drop NALs before the first keyframe.
-            } else if (s.type == 1 || s.type == H264NalParser.NAL_IDR) {
-                // Write only VCL slices (non-IDR=1, IDR=5). SPS/PPS already in csd.
-                writeSample(s)
             }
+            log?.println("consumer ended normally (frameCount=$frameCount)")
+        } catch (e: Throwable) {
+            // Do NOT rethrow: a recording failure must not crash the app or kill the live stream.
+            log?.println("EXCEPTION in consume (frameCount=$frameCount): ${e.stackTraceToString()}")
+            log?.flush()
+            stopped = true
         }
     }
 
@@ -141,10 +169,12 @@ class H264PassthroughRecorder : SessionRecorder {
             set(0, s.data.size, ptsUs,
                 if (s.type == H264NalParser.NAL_IDR) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
-        val ok = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }.isSuccess
-        if (ok) {
+        val r = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(s.data), info) }
+        if (r.isSuccess) {
             frameCount++
             lastTsMs = s.tsMs
+        } else {
+            log?.println("writeSampleData failed @frame$frameCount: ${r.exceptionOrNull()?.stackTraceToString()}")
         }
     }
 
@@ -159,6 +189,7 @@ class H264PassthroughRecorder : SessionRecorder {
 
     override suspend fun stop(): RecordingResult = withContext(Dispatchers.IO) {
         stopped = true
+        log?.println("stop() requested (started=$started frameCount=$frameCount)")
         samples.close()
         consumerJob?.join()
 
@@ -172,6 +203,9 @@ class H264PassthroughRecorder : SessionRecorder {
 
         appContext?.let { ctx -> videoUri?.let { RecordingStorage.finalizeVideo(ctx, it) } }
         scope.cancel()
+        log?.println("stopped (started=$started frameCount=$frameCount)")
+        runCatching { log?.close() }
+        log = null
 
         val durationMs = if (started && lastTsMs > sessionStartMs) lastTsMs - sessionStartMs else 0L
         RecordingResult(
