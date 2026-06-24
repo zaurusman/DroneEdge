@@ -92,6 +92,8 @@ fun RecordingsScreen(onBack: () -> Unit) {
     val vm           = viewModel<RecordingsViewModel>()
     val recordings   by vm.recordings.collectAsStateWithLifecycle()
     val error        by vm.error.collectAsStateWithLifecycle()
+    val calcSession  by vm.calcSession.collectAsStateWithLifecycle()
+    val calcProgress by vm.calcProgress.collectAsStateWithLifecycle()
     var playingEntry by remember { mutableStateOf<RecordingEntry?>(null) }
     val strings      = LocalAppStrings.current
 
@@ -101,11 +103,14 @@ fun RecordingsScreen(onBack: () -> Unit) {
         RecordingPlayer(entry = playingEntry!!, onBack = { playingEntry = null })
     } else {
         RecordingList(
-            recordings = recordings,
-            onSelect   = { playingEntry = it },
-            onRename   = { entry, name -> vm.rename(entry, name) },
-            onDelete   = { entry -> vm.delete(entry) },
-            onBack     = onBack,
+            recordings   = recordings,
+            calcSession  = calcSession,
+            calcProgress = calcProgress,
+            onSelect     = { playingEntry = it },
+            onRename     = { entry, name -> vm.rename(entry, name) },
+            onDelete     = { entry -> vm.delete(entry) },
+            onCalc       = { entry -> vm.calc(entry) },
+            onBack       = onBack,
         )
     }
 
@@ -125,11 +130,14 @@ fun RecordingsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun RecordingList(
-    recordings: List<RecordingEntry>,
-    onSelect:   (RecordingEntry) -> Unit,
-    onRename:   (RecordingEntry, String) -> Unit,
-    onDelete:   (RecordingEntry) -> Unit,
-    onBack:     () -> Unit,
+    recordings:   List<RecordingEntry>,
+    calcSession:  String?,
+    calcProgress: Float,
+    onSelect:     (RecordingEntry) -> Unit,
+    onRename:     (RecordingEntry, String) -> Unit,
+    onDelete:     (RecordingEntry) -> Unit,
+    onCalc:       (RecordingEntry) -> Unit,
+    onBack:       () -> Unit,
 ) {
     val strings = LocalAppStrings.current
     Column(
@@ -169,10 +177,13 @@ private fun RecordingList(
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(recordings) { entry ->
                     RecordingRow(
-                        entry    = entry,
-                        onClick  = { onSelect(entry) },
-                        onRename = { name -> onRename(entry, name) },
-                        onDelete = { onDelete(entry) },
+                        entry        = entry,
+                        calcSession  = calcSession,
+                        calcProgress = calcProgress,
+                        onClick      = { onSelect(entry) },
+                        onRename     = { name -> onRename(entry, name) },
+                        onDelete     = { onDelete(entry) },
+                        onCalc       = { onCalc(entry) },
                     )
                     HorizontalDivider(color = FieldBorder)
                 }
@@ -184,10 +195,13 @@ private fun RecordingList(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecordingRow(
-    entry:    RecordingEntry,
-    onClick:  () -> Unit,
-    onRename: (String) -> Unit,
-    onDelete: () -> Unit,
+    entry:        RecordingEntry,
+    calcSession:  String?,
+    calcProgress: Float,
+    onClick:      () -> Unit,
+    onRename:     (String) -> Unit,
+    onDelete:     () -> Unit,
+    onCalc:       () -> Unit,
 ) {
     var showMenu   by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
@@ -246,10 +260,29 @@ private fun RecordingRow(
                 Row(
                     modifier              = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically,
                 ) {
                     Text(text = dateStr, color = FieldTextSecondary, fontSize = 15.sp)
                     val detStr = if (entry.detectionCount >= 0) "${entry.detectionCount} det." else ""
                     if (detStr.isNotEmpty()) Text(text = detStr, color = FieldTextMuted, fontSize = 15.sp)
+                }
+                Row(
+                    modifier          = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (calcSession == entry.sessionName) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { calcProgress },
+                            modifier = Modifier.width(120.dp),
+                        )
+                    } else {
+                        TextButton(
+                            onClick = onCalc,
+                            enabled = calcSession == null,
+                        ) {
+                            Text(strings.calcBoxes, color = FieldAccent, fontSize = 13.sp)
+                        }
+                    }
                 }
             }
         }

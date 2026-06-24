@@ -58,4 +58,23 @@ class RecordingsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun clearError() { _error.value = null }
+
+    private val _calcSession = MutableStateFlow<String?>(null)
+    val calcSession: StateFlow<String?> = _calcSession.asStateFlow()
+    private val _calcProgress = MutableStateFlow(0f)
+    val calcProgress: StateFlow<Float> = _calcProgress.asStateFlow()
+
+    fun calc(entry: RecordingEntry) {
+        if (_calcSession.value != null) return
+        _calcSession.value = entry.sessionName
+        _calcProgress.value = 0f
+        viewModelScope.launch(Dispatchers.IO) {
+            val ctx = getApplication<android.app.Application>()
+            runCatching {
+                com.droneedge.app.recording.calc.runCalc(ctx, entry) { p -> _calcProgress.value = p }
+            }.exceptionOrNull()?.let { _error.value = "Calc failed: ${it.message}" }
+            _calcSession.value = null
+            reload()
+        }
+    }
 }
