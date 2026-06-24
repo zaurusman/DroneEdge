@@ -28,6 +28,9 @@ class VideoAnnotator(
         var muxer: MediaMuxer? = null
         var egl: EglCore? = null
         var compositor: FrameCompositor? = null
+        var overlay: OverlayRenderer? = null
+        var decoderSurface: android.view.Surface? = null
+        var muxerStarted = false
         val ht = HandlerThread("annot-st").also { it.start() }
         try {
             extractor.setDataSource(inputFd.fileDescriptor)
@@ -54,15 +57,15 @@ class VideoAnnotator(
             egl = EglCore(inputSurface)
             egl.makeCurrent()
             compositor = FrameCompositor()
-            val overlay = OverlayRenderer(w, h)
+            overlay = OverlayRenderer(w, h)
 
             decoder = MediaCodec.createDecoderByType(inFmt.getString(MediaFormat.KEY_MIME)!!)
-            decoder.configure(inFmt, android.view.Surface(compositor.surfaceTexture), null, 0)
+            decoderSurface = android.view.Surface(compositor.surfaceTexture)
+            decoder.configure(inFmt, decoderSurface, null, 0)
             decoder.start()
 
             muxer = MediaMuxer(outputFd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             var muxTrack = -1
-            var muxerStarted = false
 
             val frameReady = Object()
             var frameAvailable = false
@@ -118,12 +121,13 @@ class VideoAnnotator(
                         decoder.releaseOutputBuffer(outIdx, render)
                         if (render) {
                             synchronized(frameReady) {
-                                while (!frameAvailable) frameReady.wait(2_000)
+                                var tries = 0
+                                while (!frameAvailable && tries < 5) { frameReady.wait(1_000); tries++ }
                                 frameAvailable = false
                             }
                             compositor!!.surfaceTexture.updateTexImage()
                             val wallMs = track.sessionStartMs + ptsUs / 1000L
-                            compositor.drawFrame(w, h, overlay.render(track.boxesAt(wallMs)))
+                            compositor.drawFrame(w, h, overlay!!.render(track.boxesAt(wallMs)))
                             egl!!.setPresentationTime(ptsUs * 1000L)
                             egl.swapBuffers()
                             drainEncoder(false)
@@ -133,12 +137,13 @@ class VideoAnnotator(
                 }
             }
             drainEncoder(true)
-            overlay.release()
             onProgress(1f)
         } finally {
             runCatching { decoder?.stop() }; runCatching { decoder?.release() }
             runCatching { encoder?.stop() }; runCatching { encoder?.release() }
-            runCatching { if (muxer != null) muxer.stop() }; runCatching { muxer?.release() }
+            runCatching { if (muxerStarted) muxer?.stop() }; runCatching { muxer?.release() }
+            runCatching { overlay?.release() }
+            runCatching { decoderSurface?.release() }
             runCatching { compositor?.release() }
             runCatching { egl?.release() }
             runCatching { extractor.release() }

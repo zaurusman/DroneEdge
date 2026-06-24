@@ -71,7 +71,7 @@ class RecordingsViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch(Dispatchers.IO) {
             val ctx = getApplication<android.app.Application>()
             runCatching {
-                com.droneedge.app.recording.calc.runCalc(ctx, entry) { p -> _calcProgress.value = p }
+                com.droneedge.app.recording.calc.runCalc(ctx, entry.uri, entry.sessionName) { p -> _calcProgress.value = p }
             }.exceptionOrNull()?.let { _error.value = "Calc failed: ${it.message}" }
             _calcSession.value = null
             reload()
