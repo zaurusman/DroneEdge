@@ -137,11 +137,7 @@ class H264PassthroughRecorder : SessionRecorder {
                     // Start the track only once we have parameter sets AND a keyframe to begin from.
                     if (spsv != null && ppsv != null && s.type == H264NalParser.NAL_IDR) {
                         val mx = muxer ?: continue
-                        fun hex(b: ByteArray) = b.take(20).joinToString(" ") { "%02x".format(it) }
                         log?.println("starting muxer ${declaredWidth}x${declaredHeight} csd0=${spsv.size} csd1=${ppsv.size} firstIdr=${s.data.size}B")
-                        log?.println("  SPS=[${hex(spsv)}]")
-                        log?.println("  PPS=[${hex(ppsv)}]")
-                        log?.println("  IDR=[${hex(s.data)}]")
                         val fmt = MediaFormat.createVideoFormat("video/avc", declaredWidth, declaredHeight).apply {
                             setByteBuffer("csd-0", ByteBuffer.wrap(ensure4ByteStartCode(spsv)))
                             setByteBuffer("csd-1", ByteBuffer.wrap(ensure4ByteStartCode(ppsv)))
@@ -180,7 +176,6 @@ class H264PassthroughRecorder : SessionRecorder {
             set(0, data.size, ptsUs,
                 if (s.type == H264NalParser.NAL_IDR) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
-        if (frameCount < 200) log?.println("write #$frameCount type=${s.type} pts=$ptsUs size=${data.size}")
         val r = runCatching { mx.writeSampleData(trackIndex, ByteBuffer.wrap(data), info) }
         if (r.isSuccess) {
             frameCount++
