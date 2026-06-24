@@ -14,6 +14,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -24,7 +25,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -32,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.DisposableEffect
@@ -81,11 +85,14 @@ import java.util.Locale
 data class RecordingEntry(
     val uri:            Uri,
     val sessionName:    String,
+    val displayName:    String,
     val durationMs:     Long,
     val dateMs:         Long,
     val thumbnail:      android.graphics.Bitmap?,
     val detectionCount: Int,   // -1 if sidecar not found
-)
+) {
+    val isBoxed: Boolean get() = displayName.contains("boxed", ignoreCase = true)
+}
 
 @Composable
 fun RecordingsScreen(onBack: () -> Unit) {
@@ -139,7 +146,8 @@ private fun RecordingList(
     onCalc:       (RecordingEntry) -> Unit,
     onBack:       () -> Unit,
 ) {
-    val strings = LocalAppStrings.current
+    val strings      = LocalAppStrings.current
+    val boxedSessions = remember(recordings) { recordings.filter { it.isBoxed }.map { it.sessionName }.toSet() }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -176,10 +184,12 @@ private fun RecordingList(
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(recordings) { entry ->
+                    val canCalc = !entry.isBoxed && entry.sessionName !in boxedSessions
                     RecordingRow(
                         entry        = entry,
                         calcSession  = calcSession,
                         calcProgress = calcProgress,
+                        canCalc      = canCalc,
                         onClick      = { onSelect(entry) },
                         onRename     = { name -> onRename(entry, name) },
                         onDelete     = { onDelete(entry) },
@@ -198,6 +208,7 @@ private fun RecordingRow(
     entry:        RecordingEntry,
     calcSession:  String?,
     calcProgress: Float,
+    canCalc:      Boolean,
     onClick:      () -> Unit,
     onRename:     (String) -> Unit,
     onDelete:     () -> Unit,
@@ -270,19 +281,31 @@ private fun RecordingRow(
                     modifier          = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (calcSession == entry.sessionName) {
+                    if (entry.isBoxed) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(FieldAccent.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Text(strings.boxedBadge, color = FieldAccent, fontSize = 13.sp)
+                        }
+                    } else if (calcSession == entry.sessionName) {
                         androidx.compose.material3.LinearProgressIndicator(
                             progress = { calcProgress },
                             modifier = Modifier.width(120.dp),
                         )
-                    } else {
-                        TextButton(
-                            onClick = onCalc,
-                            enabled = calcSession == null,
+                    } else if (canCalc) {
+                        Button(
+                            onClick        = onCalc,
+                            enabled        = calcSession == null,
+                            shape          = RoundedCornerShape(percent = 50),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                         ) {
-                            Text(strings.calcBoxes, color = FieldAccent, fontSize = 13.sp)
+                            Text(strings.calcBoxes)
                         }
                     }
+                    // else: raw entry whose session already has a boxed sibling — show nothing
                 }
             }
         }
@@ -495,6 +518,7 @@ internal fun queryRecordingsMediaStore(context: Context): List<RecordingEntry> {
             results += RecordingEntry(
                 uri            = uri,
                 sessionName    = sessionName,
+                displayName    = cursor.getString(nameCol) ?: "",
                 durationMs     = cursor.getLong(durCol),
                 dateMs         = cursor.getLong(dateCol) * 1000L,
                 thumbnail      = loadThumbnail(context, uri, id),
@@ -526,17 +550,21 @@ internal fun queryRecordingsFileSystem(): List<RecordingEntry> {
     return root.listFiles()
         ?.filter { it.isDirectory }
         ?.sortedByDescending { it.lastModified() }
-        ?.mapNotNull { dir ->
-            val mp4 = File(dir, "annotated.mp4")
-            if (!mp4.exists()) return@mapNotNull null
-            RecordingEntry(
-                uri            = Uri.fromFile(mp4),
-                sessionName    = dir.name,
-                durationMs     = 0L,
-                dateMs         = dir.lastModified(),
-                thumbnail      = null,
-                detectionCount = -1,
-            )
+        ?.flatMap { dir ->
+            val candidates = listOf("annotated_boxed.mp4", "annotated.mp4")
+            candidates.mapNotNull { fileName ->
+                val mp4 = File(dir, fileName)
+                if (!mp4.exists()) return@mapNotNull null
+                RecordingEntry(
+                    uri            = Uri.fromFile(mp4),
+                    sessionName    = dir.name,
+                    displayName    = mp4.name,
+                    durationMs     = 0L,
+                    dateMs         = dir.lastModified(),
+                    thumbnail      = null,
+                    detectionCount = -1,
+                )
+            }
         }
         ?: emptyList()
 }

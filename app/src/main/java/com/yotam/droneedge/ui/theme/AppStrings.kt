@@ -48,6 +48,7 @@ class AppStrings(
     val djiDisconnected:     String,
     val usbDisconnected:     String,
     val calcBoxes:           String,
+    val boxedBadge:          String,
 ) {
     companion object {
         val Hebrew = AppStrings(
@@ -96,6 +97,7 @@ class AppStrings(
             djiDisconnected     = "משקפי DJI התנתקו",
             usbDisconnected     = "מצלמת USB התנתקה",
             calcBoxes           = "חשב תיבות",
+            boxedBadge          = "תיבות",
         )
 
         val English = AppStrings(
@@ -144,6 +146,7 @@ class AppStrings(
             djiDisconnected     = "DJI Goggles disconnected",
             usbDisconnected     = "USB camera disconnected",
             calcBoxes           = "Calc boxes",
+            boxedBadge          = "boxes",
         )
     }
 }

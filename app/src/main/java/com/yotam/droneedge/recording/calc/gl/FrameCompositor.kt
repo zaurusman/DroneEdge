@@ -51,7 +51,7 @@ class FrameCompositor {
 
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, overlayTextureId)
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, overlay, 0)
-        drawQuad(rgbaProgram, GLES20.GL_TEXTURE_2D, overlayTextureId, IDENTITY, blend = true)
+        drawQuad(rgbaProgram, GLES20.GL_TEXTURE_2D, overlayTextureId, FLIP_Y, blend = true)
     }
 
     private fun drawQuad(program: Int, target: Int, texId: Int, texMatrix: FloatArray, blend: Boolean) {
@@ -111,6 +111,9 @@ class FrameCompositor {
 
     private companion object {
         val IDENTITY = floatArrayOf(1f,0f,0f,0f, 0f,1f,0f,0f, 0f,0f,1f,0f, 0f,0f,0f,1f)
+        // Flips texture V (t -> 1 - t): the overlay bitmap is top-down; the quad samples
+        // bottom-up, so without this the boxes render vertically mirrored.
+        val FLIP_Y = floatArrayOf(1f,0f,0f,0f, 0f,-1f,0f,0f, 0f,0f,1f,0f, 0f,1f,0f,1f)
         const val VERT = """
             attribute vec4 aPos; attribute vec4 aTex; uniform mat4 uTexMatrix;
             varying vec2 vTex;
