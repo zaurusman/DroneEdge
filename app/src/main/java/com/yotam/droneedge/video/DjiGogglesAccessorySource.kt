@@ -56,6 +56,13 @@ class DjiGogglesAccessorySource(
     @Volatile private var running    = false
     @Volatile private var frameIndex = 0L
 
+    /**
+     * Optional tap on complete H.264 NAL units (each beginning with a 00 00 01 start code),
+     * called inline on the decode loop while recording. Null = no recording (default).
+     * Second arg is the NAL type (see H264NalParser).
+     */
+    @Volatile var encodedSink: ((nal: ByteArray, nalType: Int) -> Unit)? = null
+
     override val frames: Flow<VideoFrame> = channelFlow {
         val log = DjiGogglesVideoSource.openLogWriter(context)
         log?.println("=== DjiGogglesAccessorySource ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())} ===")
@@ -216,6 +223,13 @@ class DjiGogglesAccessorySource(
                                     while (ns < lastSc) {
                                         val nx = nextStartCode(vbuf, ns + 3, lastSc)
                                         val ne = if (nx < 0) lastSc else nx
+                                        encodedSink?.let { sink ->
+                                            // Never let a recording fault kill the live stream.
+                                            runCatching {
+                                                val nal = vbuf.copyOfRange(ns, ne)
+                                                sink(nal, H264NalParser.nalType(nal))
+                                            }
+                                        }
                                         val inputIdx = try { codec.dequeueInputBuffer(10_000) }
                                                        catch (e: IllegalStateException) { -1 }
                                         if (inputIdx >= 0) {
